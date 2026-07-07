@@ -16,6 +16,7 @@ generated from a real **HID event source** (`CGEventSourceCreate(kCGEventSourceS
 | `send_message(to, text, dry_run=False)` | Open the chat for `to`, confirm it, paste `text`, click send, and OCR-verify it landed. `dry_run` pastes into the box but does not click send. |
 | `open_chat(to)` | Foreground a conversation without sending. |
 | `read_open_chat()` | OCR the currently-visible Viber window and return its text. |
+| `put_draft(text)` | Paste `text` into the currently-open chat's compose box — no navigation, no send. For drafting a reply to review. |
 | `list_contacts()` | Return the name -> number aliases from `contacts.json`. |
 
 `to` is either an E.164 number (`+639171234567`) or a name defined in `contacts.json`. Unknown
@@ -50,8 +51,22 @@ uv run client.py contacts                          # show alias map
 uv run client.py open "Marianne"                   # open a chat
 uv run client.py send "Marianne" "hello" --dry-run # fill box, don't send
 uv run client.py send "Marianne" "hello"           # actually send
+uv run client.py draft "a reply to review"         # drop draft in open chat (not sent)
 uv run client.py read                              # OCR the open chat
 ```
+
+## Convenience: `/viber-reply` (Claude Code slash command)
+
+A user-scope command at `~/.claude/commands/viber-reply.md` reads the currently-open chat, drafts a
+reply in your voice, and pastes it into the compose box **without sending** — you review and send.
+
+```
+/viber-reply
+/viber-reply keep it short and warm; say I'll call tonight
+```
+
+It uses `read_open_chat` for context and `put_draft` to place the reply; it never calls
+`send_message`, so nothing is sent automatically.
 
 ## Register with Claude Code
 

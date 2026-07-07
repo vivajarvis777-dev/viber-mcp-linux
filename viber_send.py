@@ -238,6 +238,44 @@ def _text_landed(text: str, ocr_text: str) -> bool:
     return sig in haystack
 
 
+def _paste_into_compose(text: str, b: dict) -> None:
+    """Click the compose box of the open chat, clear any draft, and paste `text` (no send).
+
+    Assumes `text` is already on the clipboard. `b` is the live window bounds.
+    """
+    _click(*_point(_COMPOSE_FRAC, b))                 # focus compose box
+    time.sleep(0.4)
+    _key(_KEY_A, Quartz.kCGEventFlagMaskCommand)      # select any leftover draft
+    time.sleep(0.1)
+    _key(_KEY_DELETE)                                  # clear it
+    time.sleep(0.15)
+    _key(_KEY_V, Quartz.kCGEventFlagMaskCommand)      # paste
+    time.sleep(0.4)
+
+
+def paste_into_open_chat(text: str) -> dict:
+    """Paste `text` into the CURRENTLY OPEN chat's compose box — no navigation, no send.
+
+    Use this to drop a drafted reply into whatever chat the user has open, so they can
+    review and send it themselves. The clipboard is saved and restored.
+    """
+    if not text:
+        raise SendError("Refusing to draft an empty message.")
+    if not viber_is_running():
+        raise SendError("Viber is not running. Launch and sign in to Viber first.")
+
+    saved = _get_clipboard()
+    try:
+        _set_clipboard(text)
+        _focus_viber()
+        _paste_into_compose(text, _window_bounds())
+    finally:
+        time.sleep(0.25)
+        if saved is not None:
+            _set_clipboard(saved)
+    return {"drafted": True, "sent": False, "text": text}
+
+
 def send_message(to: str, text: str, dry_run: bool = False) -> dict:
     """Send `text` to `to` via the Viber desktop app.
 
@@ -256,15 +294,7 @@ def send_message(to: str, text: str, dry_run: bool = False) -> dict:
         _set_clipboard(text)
         _focus_viber()
         b = _window_bounds()
-
-        _click(*_point(_COMPOSE_FRAC, b))   # focus compose box
-        time.sleep(0.4)
-        _key(_KEY_A, Quartz.kCGEventFlagMaskCommand)  # select any leftover draft
-        time.sleep(0.1)
-        _key(_KEY_DELETE)                              # clear it
-        time.sleep(0.15)
-        _key(_KEY_V, Quartz.kCGEventFlagMaskCommand)  # paste
-        time.sleep(0.4)
+        _paste_into_compose(text, b)
 
         if dry_run:
             return {"recipient": number, "text": text, "sent": False, "dry_run": True}

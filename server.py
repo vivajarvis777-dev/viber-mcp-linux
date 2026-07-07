@@ -42,6 +42,20 @@ def open_chat(to: str) -> dict:
 
 
 @mcp.tool()
+def put_draft(text: str) -> dict:
+    """Paste `text` into the currently-open Viber chat's compose box WITHOUT sending.
+
+    Does not navigate — it drafts into whatever chat is open right now, so the user can
+    review, edit, and press send themselves. Pair with read_open_chat to draft a reply:
+    read the visible conversation, compose a fitting reply, then put_draft it.
+
+    Args:
+        text: the drafted reply to place in the compose box.
+    """
+    return viber_send.paste_into_open_chat(text)
+
+
+@mcp.tool()
 def read_open_chat() -> dict:
     """Read the currently-open Viber conversation via screen OCR.
 
