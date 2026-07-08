@@ -41,7 +41,7 @@ What's left — and what this uses — is the `viber://` URL scheme, HID-sourced
 | `read_open_chat()` | OCR the currently-visible Viber window and return its text. |
 | `list_chats()` | List the sidebar chats (names, previews, times, unread counts) via OCR — a quick inbox overview. |
 | `put_draft(text)` | Paste `text` into the currently-open chat's compose box — no navigation, no send. For drafting a reply to review. |
-| `search_and_open(name)` | **[experimental]** Search Viber by name and open the top result. Search-box automation is flaky on this build — always verify the returned chat before sending. |
+| `search_and_open(name)` | Search Viber by name and open the **best-matching** contact/chat (exact/prefix beats substring). Returns `matched` + `low_confidence`; verify before sending if `low_confidence`. |
 | `list_contacts()` | Return the name → number aliases from `contacts.json`. |
 
 `to` is either an **E.164 number** (`+639171234567`) or a **name defined in `contacts.json`**.

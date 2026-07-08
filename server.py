@@ -69,12 +69,13 @@ def reply(text: str) -> dict:
 
 @mcp.tool()
 def search_and_open(name: str) -> dict:
-    """[EXPERIMENTAL] Search Viber for `name` and open the top result; return its visible text.
+    """Search Viber for `name` and open the best-matching contact/chat; return its visible text.
 
-    Types into Viber's search box and clicks the first result. Search-box automation is
-    unreliable on this Qt build (text entry and result selection can miss), so ALWAYS check the
-    returned text is the intended person before sending anything. Prefer open_chat with a number
-    or a contacts.json name when possible.
+    Works for any Viber contact by name (not just contacts.json). Types into the search box,
+    OCRs the results, and opens the row that best matches `name` — exact/prefix matches beat
+    substrings (so "Ivy" opens "Ivy Cloma-Rosales", not "Divya"). Returns `matched` (the row it
+    opened) and `low_confidence` (true if only a weak substring match existed). If
+    `low_confidence` is true, confirm the opened chat is correct before sending.
 
     Args:
         name: the contact or chat name to search for.

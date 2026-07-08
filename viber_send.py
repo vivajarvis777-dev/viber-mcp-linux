@@ -51,7 +51,6 @@ _KEY_ESCAPE = 53
 _COMPOSE_FRAC = (0.45, 0.96)
 _SEND_BTN_FRAC = (0.97, 0.955)
 _SEARCH_FRAC = (0.15, 0.075)        # search box in the top-left
-_FIRST_RESULT_FRAC = (0.14, 0.235)  # first row of the chat list / search results
 
 
 class SendError(Exception):
@@ -319,12 +318,68 @@ def reply(text: str) -> dict:
     return {"sent": True, "text": text, "verified": verified}
 
 
-def search_and_open(name: str) -> dict:
-    """Search Viber for `name` and open the top result — works for any Viber contact/chat,
-    not just names in contacts.json.
+# Search-result rows that are not contacts/chats and must never be opened.
+_RESULT_SKIP = {
+    "new group", "new community", "new channel", "new call link", "all contacts",
+    "viber only", "contacts", "search...", "search", "chats", "unread", "favorites",
+    "all", "recent", "messages", "people", "share a link to your viber call",
+    # search-result section headers
+    "conversations", "channels", "businesses", "bots", "cars", "communities",
+}
 
-    Types into Viber's search box, opens the first result, and OCR-confirms a chat opened.
-    Returns the opened chat's visible text. Raises SendError if nothing sendable opens.
+# Observations above this normalized y are the search bar / top nav, not result rows.
+_RESULTS_TOP_Y = 0.12
+_PHONE_RE = re.compile(r"^[+\d][\d\s()\-]+$")
+_COUNT_RE = re.compile(r"^\d+\s+contacts?$")
+
+
+def _score_result(query: str, text: str) -> int:
+    """Rank how well an OCR'd result row matches `query`. Higher = better; <=0 = reject."""
+    q = query.lower().strip()
+    t = text.lower().strip()
+    if not t or t in _RESULT_SKIP or _PHONE_RE.match(t) or _COUNT_RE.match(t):
+        return -1
+    if t == q:
+        return 4
+    if t.startswith(q):
+        return 3
+    if any(w.startswith(q) for w in t.split()):  # any word starts with the query
+        return 3
+    if q in t:                                    # substring only (weak, e.g. "ivy" in "Divya")
+        return 1
+    return -1
+
+
+def _find_result_row(query: str, observations: list[dict], b: dict):
+    """Pick the best-matching result row; return (text, x, y, score) or None.
+
+    Only considers the left column (the results list). Prefers exact/prefix matches over
+    substrings so, e.g., searching "Ivy" opens "Ivy Cloma-Rosales", not "Divya".
+    """
+    candidates = []
+    for o in observations:
+        if o["x"] >= 0.35 or o["y"] < _RESULTS_TOP_Y:  # left column, below the search bar
+            continue
+        score = _score_result(query, o["text"])
+        if score > 0:
+            candidates.append((score, o["y"], o["text"]))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: (-c[0], c[1]))  # best score, then topmost
+    score, y, text = candidates[0]
+    x = b["X"] + b["Width"] * 0.14
+    click_y = b["Y"] + b["Height"] * y
+    return text, x, click_y, score
+
+
+def search_and_open(name: str) -> dict:
+    """Search Viber for `name` and open the best-matching result.
+
+    Works for any Viber contact/chat by name (not limited to contacts.json). Types into the
+    search box, then picks the result row that best matches `name` (exact/prefix beats
+    substring) by OCR-ing the results and clicking that row's actual position. Raises
+    SendError if there's no confident match. Returns the opened chat's visible text plus the
+    matched name and a `low_confidence` flag (true if only a weak substring match was found).
     """
     name = name.strip()
     if not name:
@@ -335,20 +390,32 @@ def search_and_open(name: str) -> dict:
     _focus_viber()
     b = _window_bounds()
 
-    _click(*_point(_SEARCH_FRAC, b))                  # focus search box
+    _click(*_point((0.25, 0.08), b))   # click the search ✕ to clear any previous query
     time.sleep(0.4)
-    _key(_KEY_A, Quartz.kCGEventFlagMaskCommand)      # clear any previous query
-    time.sleep(0.1)
-    _key(_KEY_DELETE)
-    time.sleep(0.15)
+    _click(*_point(_SEARCH_FRAC, b))   # focus the search field
+    time.sleep(0.4)
     _type(name)
-    time.sleep(1.5)                                    # let results populate
+    time.sleep(1.6)                     # let results populate
 
-    _click(*_point(_FIRST_RESULT_FRAC, b))            # open the top result
+    _, obs = viber_ocr._capture_and_ocr()
+    match = _find_result_row(name, obs, b)
+    if match is None:
+        raise SendError(
+            f"No matching contact/chat found for '{name}' in Viber search. Try a fuller name "
+            "or use a phone number with open_chat."
+        )
+    matched_text, x, y, score = match
+    _click(x, y)
     time.sleep(1.2)
 
     result = _wait_for_sendable_chat(number=name, name=name, timeout=8.0)
-    return {"query": name, "opened": True, "text": result}
+    return {
+        "query": name,
+        "matched": matched_text,
+        "low_confidence": score <= 1,  # only a substring match — verify before sending
+        "opened": True,
+        "text": result,
+    }
 
 
 def send_message(to: str, text: str, dry_run: bool = False) -> dict:
