@@ -3,8 +3,12 @@
 Usage:
   uv run client.py list
   uv run client.py open   "+639171234567"
-  uv run client.py send   "+639171234567" "hello from MCP" [--dry-run]
-  uv run client.py draft  "a reply to drop in the open chat (not sent)"
+  uv run client.py send     "+639171234567" "hello from MCP" [--dry-run]
+  uv run client.py reply    "send this into the currently-open chat"
+  uv run client.py draft    "a reply to drop in the open chat (not sent)"
+  uv run client.py search   "Marianne"
+  uv run client.py openread "Marianne"
+  uv run client.py chats
   uv run client.py read
   uv run client.py contacts
 """
@@ -47,6 +51,14 @@ async def _run(argv: list[str]) -> None:
                 )
             elif cmd == "draft":
                 result = await session.call_tool("put_draft", {"text": rest[0]})
+            elif cmd == "reply":
+                result = await session.call_tool("reply", {"text": rest[0]})
+            elif cmd == "search":
+                result = await session.call_tool("search_and_open", {"name": rest[0]})
+            elif cmd == "chats":
+                result = await session.call_tool("list_chats", {})
+            elif cmd == "openread":
+                result = await session.call_tool("open_and_read", {"to": rest[0]})
             elif cmd == "read":
                 result = await session.call_tool("read_open_chat", {})
             elif cmd == "contacts":

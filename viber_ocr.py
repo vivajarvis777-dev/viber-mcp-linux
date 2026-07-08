@@ -72,23 +72,30 @@ def capture_window(window_id: int, out_path: str) -> None:
         )
 
 
-def ocr_image(image_path: str) -> list[str]:
-    """Run Apple Vision text recognition on an image; return lines top-to-bottom."""
+def ocr_observations(image_path: str) -> list[dict]:
+    """Run Apple Vision OCR; return observations with normalized positions.
+
+    Each dict: {"text", "x", "y"} where x is the left edge (0=left, 1=right) and y is the
+    top position (0=top, 1=bottom), both normalized 0..1. Sorted top-to-bottom.
+    """
     url = NSURL.fileURLWithPath_(image_path)
     handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(url, None)
 
-    results: list[tuple[float, str]] = []
+    results: list[dict] = []
 
     def _completion(request, error):
         for obs in request.results() or []:
             top = obs.topCandidates_(1)
             if not top:
                 continue
-            text = top[0].string()
-            # boundingBox origin is bottom-left; use -y so higher-on-screen sorts first.
-            box = obs.boundingBox()
-            y = box.origin.y
-            results.append((-y, text))
+            box = obs.boundingBox()  # origin bottom-left
+            results.append(
+                {
+                    "text": top[0].string(),
+                    "x": box.origin.x,
+                    "y": 1.0 - (box.origin.y + box.size.height),  # flip to top-down
+                }
+            )
 
     request = Vision.VNRecognizeTextRequest.alloc().initWithCompletionHandler_(_completion)
     request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
@@ -98,8 +105,22 @@ def ocr_image(image_path: str) -> list[str]:
     if not success:
         raise OCRError(f"Vision OCR failed: {error}")
 
-    results.sort(key=lambda t: t[0])
-    return [text for _, text in results]
+    results.sort(key=lambda o: o["y"])
+    return results
+
+
+def ocr_image(image_path: str) -> list[str]:
+    """Run Apple Vision text recognition on an image; return lines top-to-bottom."""
+    return [o["text"] for o in ocr_observations(image_path)]
+
+
+def _capture_and_ocr() -> tuple[int, list[dict]]:
+    window = find_viber_window()
+    window_id = int(window["kCGWindowNumber"])
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as tmp:
+        capture_window(window_id, tmp.name)
+        obs = ocr_observations(tmp.name)
+    return window_id, obs
 
 
 def read_open_chat() -> dict:
@@ -107,11 +128,29 @@ def read_open_chat() -> dict:
 
     Returns the recognized lines and the joined text of the currently-open conversation.
     """
-    window = find_viber_window()
-    window_id = int(window["kCGWindowNumber"])
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as tmp:
-        capture_window(window_id, tmp.name)
-        lines = ocr_image(tmp.name)
+    window_id, obs = _capture_and_ocr()
+    lines = [o["text"] for o in obs]
+    return {
+        "window_id": window_id,
+        "line_count": len(lines),
+        "lines": lines,
+        "text": "\n".join(lines),
+    }
+
+
+# The chat-list sidebar occupies roughly the left third of the window.
+_SIDEBAR_MAX_X = 0.30
+
+
+def read_chat_list() -> dict:
+    """Capture the window and return only the left-sidebar (chat list) text.
+
+    Filters OCR to the left column so the returned lines are the chat list — contact
+    names, message previews, timestamps, and unread counts — without the open
+    conversation's text mixed in. Order is top-to-bottom (most recent first).
+    """
+    window_id, obs = _capture_and_ocr()
+    lines = [o["text"] for o in obs if o["x"] < _SIDEBAR_MAX_X]
     return {
         "window_id": window_id,
         "line_count": len(lines),

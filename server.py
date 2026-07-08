@@ -42,6 +42,58 @@ def open_chat(to: str) -> dict:
 
 
 @mcp.tool()
+def open_and_read(to: str) -> dict:
+    """Open a conversation and return its visible text in one step ("read my chat with X").
+
+    Args:
+        to: an E.164 phone number or a contact name from contacts.json.
+    """
+    number = viber_send.open_chat(to)
+    result = viber_ocr.read_open_chat()
+    result["opened"] = number
+    return result
+
+
+@mcp.tool()
+def reply(text: str) -> dict:
+    """Send `text` into the CURRENTLY OPEN chat (no navigation).
+
+    Use after read_open_chat when the right chat is already on screen — avoids re-resolving
+    or re-opening the recipient. Returns whether it sent and `verified` (seen on screen).
+
+    Args:
+        text: the message body (emoji/unicode/newlines supported).
+    """
+    return viber_send.reply(text)
+
+
+@mcp.tool()
+def search_and_open(name: str) -> dict:
+    """[EXPERIMENTAL] Search Viber for `name` and open the top result; return its visible text.
+
+    Types into Viber's search box and clicks the first result. Search-box automation is
+    unreliable on this Qt build (text entry and result selection can miss), so ALWAYS check the
+    returned text is the intended person before sending anything. Prefer open_chat with a number
+    or a contacts.json name when possible.
+
+    Args:
+        name: the contact or chat name to search for.
+    """
+    return viber_send.search_and_open(name)
+
+
+@mcp.tool()
+def list_chats() -> dict:
+    """List recent chats from the sidebar (names, previews, times, unread counts) via OCR.
+
+    Reads only the left-hand chat list of whatever is currently on screen — a quick inbox
+    overview. Reflects the sidebar's current filter/scroll position; scroll the list in Viber
+    to see more.
+    """
+    return viber_ocr.read_chat_list()
+
+
+@mcp.tool()
 def put_draft(text: str) -> dict:
     """Paste `text` into the currently-open Viber chat's compose box WITHOUT sending.
 

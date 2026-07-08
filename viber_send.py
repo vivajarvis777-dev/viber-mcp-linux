@@ -46,10 +46,12 @@ _KEY_RETURN = 36
 _KEY_DELETE = 51
 _KEY_ESCAPE = 53
 
-# Compose box and send button positions as fractions of the Viber window (measured on
-# v28.2.0 with the contact-info panel CLOSED). Recomputed from live window bounds each call.
+# UI positions as fractions of the Viber window (measured on v28.2.0 with the contact-info
+# panel CLOSED). Recomputed from live window bounds each call.
 _COMPOSE_FRAC = (0.45, 0.96)
 _SEND_BTN_FRAC = (0.97, 0.955)
+_SEARCH_FRAC = (0.15, 0.075)        # search box in the top-left
+_FIRST_RESULT_FRAC = (0.14, 0.235)  # first row of the chat list / search results
 
 
 class SendError(Exception):
@@ -139,6 +141,16 @@ def _key(code: int, flags: int = 0) -> None:
     _post(down)
     time.sleep(0.03)
     _post(up)
+
+
+def _type(text: str) -> None:
+    """Type `text` via HID keyboard events (handles unicode/emoji)."""
+    for ch in text:
+        for down in (True, False):
+            e = Quartz.CGEventCreateKeyboardEvent(_SRC, 0, down)
+            Quartz.CGEventKeyboardSetUnicodeString(e, len(ch), ch)
+            _post(e)
+            time.sleep(0.012)
 
 
 def _focus_viber() -> None:
@@ -276,6 +288,69 @@ def paste_into_open_chat(text: str) -> dict:
     return {"drafted": True, "sent": False, "text": text}
 
 
+def reply(text: str) -> dict:
+    """Send `text` into the CURRENTLY OPEN chat — no navigation, no recipient resolution.
+
+    Use after read_open_chat when the desired chat is already on screen. Clears any draft,
+    pastes, clicks send, and OCR-verifies. The clipboard is saved and restored.
+    """
+    if not text:
+        raise SendError("Refusing to send an empty message.")
+    if not viber_is_running():
+        raise SendError("Viber is not running. Launch and sign in to Viber first.")
+
+    saved = _get_clipboard()
+    verified = None
+    try:
+        _set_clipboard(text)
+        _focus_viber()
+        b = _window_bounds()
+        _paste_into_compose(text, b)
+        _click(*_point(_SEND_BTN_FRAC, b))
+        time.sleep(1.3)  # let the sent bubble render before verifying
+        try:
+            verified = _text_landed(text, viber_ocr.read_open_chat()["text"])
+        except viber_ocr.OCRError:
+            verified = None
+    finally:
+        time.sleep(0.25)
+        if saved is not None:
+            _set_clipboard(saved)
+    return {"sent": True, "text": text, "verified": verified}
+
+
+def search_and_open(name: str) -> dict:
+    """Search Viber for `name` and open the top result — works for any Viber contact/chat,
+    not just names in contacts.json.
+
+    Types into Viber's search box, opens the first result, and OCR-confirms a chat opened.
+    Returns the opened chat's visible text. Raises SendError if nothing sendable opens.
+    """
+    name = name.strip()
+    if not name:
+        raise SendError("Search query is empty.")
+    if not viber_is_running():
+        raise SendError("Viber is not running. Launch and sign in to Viber first.")
+
+    _focus_viber()
+    b = _window_bounds()
+
+    _click(*_point(_SEARCH_FRAC, b))                  # focus search box
+    time.sleep(0.4)
+    _key(_KEY_A, Quartz.kCGEventFlagMaskCommand)      # clear any previous query
+    time.sleep(0.1)
+    _key(_KEY_DELETE)
+    time.sleep(0.15)
+    _type(name)
+    time.sleep(1.5)                                    # let results populate
+
+    _click(*_point(_FIRST_RESULT_FRAC, b))            # open the top result
+    time.sleep(1.2)
+
+    result = _wait_for_sendable_chat(number=name, name=name, timeout=8.0)
+    return {"query": name, "opened": True, "text": result}
+
+
 def send_message(to: str, text: str, dry_run: bool = False) -> dict:
     """Send `text` to `to` via the Viber desktop app.
 
@@ -300,7 +375,7 @@ def send_message(to: str, text: str, dry_run: bool = False) -> dict:
             return {"recipient": number, "text": text, "sent": False, "dry_run": True}
 
         _click(*_point(_SEND_BTN_FRAC, b))   # click send
-        time.sleep(0.8)
+        time.sleep(1.3)  # let the sent bubble render before verifying
 
         # Verify the message actually appears in the conversation.
         try:

@@ -1,7 +1,7 @@
 [project]
 name = "viber-mcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "MCP server to send and read Viber Desktop messages on macOS via UI automation"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
