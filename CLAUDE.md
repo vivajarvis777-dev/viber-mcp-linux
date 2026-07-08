@@ -65,10 +65,28 @@ Data flow for a send: resolve recipient → `backend.open_url("viber://chat?numb
 ## Porting to another OS
 
 Add `backends/<os>.py` implementing `Backend`, wire it into `get_backend()`, and re-tune that
-platform's element locations. Two realities: **Windows** should likely implement the `click_*`
-methods via **UI Automation** (Qt exposes a usable UIA tree on Windows) instead of coordinates —
-more robust; **Linux/Wayland** heavily restricts capture + synthetic input (X11 is far easier). The
-domain logic, tool definitions, and `contacts.json` handling are already shared and need no changes.
+platform's element locations. The domain logic, tool definitions, and `contacts.json` handling are
+already shared and need no changes.
+
+Status:
+
+| Platform | Backend | State |
+|----------|---------|-------|
+| macOS | `backends/macos.py` (`MacBackend`) | ✅ implemented (Quartz/Vision/AppKit, coordinate-based) |
+| Windows | `backends/windows.py` (`WindowsBackend`) | 🚧 **scaffold** — instantiable, every method raises `NotImplementedError` with implementation notes |
+| Linux | — | ❌ not started |
+
+**Windows (next):** implement the stubs in `backends/windows.py`. The recommended approach is **UI
+Automation** (Qt exposes a usable UIA tree on Windows, unlike macOS), so target real elements
+(compose edit, send button, search box, list items) by ControlType/Name/AutomationId and invoke
+them — more robust than coordinates. `observe()` should emit `{text,x,y}` from element bounding
+rects and stash the elements so `click_result(norm_y)` can map back to one. Suggested libs:
+`uiautomation`/`pywinauto` (UIA), `psutil`+`pywin32` (process/window), `win32clipboard`, and
+`Windows.Media.Ocr` only as a fallback. Add Windows deps to `pyproject.toml` gated on
+`sys_platform == 'win32'` when implementing.
+
+**Linux:** hardest target — Wayland heavily restricts screen capture and synthetic input; X11
+(via `xdotool`/`wmctrl` + Tesseract) is far easier.
 
 ## Critical, non-obvious constraints (most bugs here come from violating these)
 

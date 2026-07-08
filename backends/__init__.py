@@ -16,11 +16,15 @@ def get_backend() -> Backend:
         if sys.platform == "darwin":
             from .macos import MacBackend
             _backend = MacBackend()
+        elif sys.platform == "win32":
+            # Scaffold: instantiable, but its methods raise NotImplementedError until filled in.
+            from .windows import WindowsBackend
+            _backend = WindowsBackend()
         else:
-            # Port target: implement backends/windows.py (WindowsBackend, likely via UI
-            # Automation) or backends/linux.py, then wire them up here.
+            # Port target: implement backends/linux.py (X11 easier than Wayland), then wire here.
             raise NotImplementedError(
-                f"No Viber backend for platform {sys.platform!r} yet (only macOS is implemented)."
+                f"No Viber backend for platform {sys.platform!r} yet "
+                "(macOS implemented; Windows scaffolded; Linux not started)."
             )
     return _backend
 
