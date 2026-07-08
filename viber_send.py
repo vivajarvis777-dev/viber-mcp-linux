@@ -49,8 +49,6 @@ _KEY_ESCAPE = 53
 # UI positions as fractions of the Viber window (measured on v28.2.0 with the contact-info
 # panel CLOSED). Recomputed from live window bounds each call.
 _COMPOSE_FRAC = (0.45, 0.96)
-_SEND_BTN_FRAC = (0.97, 0.955)
-_SEARCH_FRAC = (0.15, 0.075)        # search box in the top-left
 
 
 class SendError(Exception):
@@ -143,10 +141,15 @@ def _key(code: int, flags: int = 0) -> None:
 
 
 def _type(text: str) -> None:
-    """Type `text` via HID keyboard events (handles unicode/emoji)."""
+    """Type `text` via HID keyboard events (handles unicode/emoji).
+
+    Explicitly clears modifier flags on every event: otherwise a lingering Cmd from a prior
+    Cmd+A can leak into the first character (e.g. "M" → Cmd+M = minimize window).
+    """
     for ch in text:
         for down in (True, False):
             e = Quartz.CGEventCreateKeyboardEvent(_SRC, 0, down)
+            Quartz.CGEventSetFlags(e, 0)  # no modifiers — plain character
             Quartz.CGEventKeyboardSetUnicodeString(e, len(ch), ch)
             _post(e)
             time.sleep(0.012)
@@ -163,6 +166,16 @@ def _window_bounds() -> dict:
 
 def _point(frac: tuple[float, float], b: dict) -> tuple[float, float]:
     return b["X"] + b["Width"] * frac[0], b["Y"] + b["Height"] * frac[1]
+
+
+def _send_point(b: dict) -> tuple[float, float]:
+    """The send button sits ~24px in from the bottom-right corner, independent of window size."""
+    return b["X"] + b["Width"] - 28, b["Y"] + b["Height"] - 30
+
+
+def _panel_close_point(b: dict) -> tuple[float, float]:
+    """The right-side panel's ✕ sits at the top-right corner, ~25px in / ~90px down."""
+    return b["X"] + b["Width"] - 25, b["Y"] + 90
 
 
 # ------------------------------------------------------------------------------ clipboard
@@ -249,11 +262,52 @@ def _text_landed(text: str, ocr_text: str) -> bool:
     return sig in haystack
 
 
+def _verify_sent(text: str):
+    """After a send, verify the message actually left the compose box.
+
+    Returns True only if the text appears in the OCR AND the compose placeholder is back
+    (i.e. the box is empty again → it was sent, not left sitting in the box). Returns None if
+    OCR failed. This avoids the false positive where text pasted-but-not-sent still shows.
+    """
+    try:
+        ocr = viber_ocr.read_open_chat()["text"]
+    except viber_ocr.OCRError:
+        return None
+    return _text_landed(text, ocr) and ("type a message" in ocr.lower())
+
+
+# A right-side panel (chat-info OR the sticker "Settings" panel) occupies the right edge and
+# shifts the send button, so it must be closed before a send. These titles/rows appear ONLY
+# when such a panel is open.
+_PANEL_MARKERS = {
+    "clear chat", "set background", "hide completed notes", "delete chat",
+    "settings", "add to groups", "participants",
+}
+def _side_panel_open(observations: list[dict]) -> bool:
+    return any(
+        o["x"] > 0.80 and o["text"].strip().lower() in _PANEL_MARKERS for o in observations
+    )
+
+
+def _ensure_panel_closed(b: dict) -> None:
+    """Close any right-side panel if open (it displaces the send button). Retries once."""
+    for _ in range(2):
+        try:
+            _, obs = viber_ocr._capture_and_ocr()
+        except viber_ocr.OCRError:
+            return
+        if not _side_panel_open(obs):
+            return
+        _click(*_panel_close_point(b))
+        time.sleep(0.6)
+
+
 def _paste_into_compose(text: str, b: dict) -> None:
     """Click the compose box of the open chat, clear any draft, and paste `text` (no send).
 
     Assumes `text` is already on the clipboard. `b` is the live window bounds.
     """
+    _ensure_panel_closed(b)                           # panel would displace the send button
     _click(*_point(_COMPOSE_FRAC, b))                 # focus compose box
     time.sleep(0.4)
     _key(_KEY_A, Quartz.kCGEventFlagMaskCommand)      # select any leftover draft
@@ -305,12 +359,9 @@ def reply(text: str) -> dict:
         _focus_viber()
         b = _window_bounds()
         _paste_into_compose(text, b)
-        _click(*_point(_SEND_BTN_FRAC, b))
+        _click(*_send_point(b))
         time.sleep(1.3)  # let the sent bubble render before verifying
-        try:
-            verified = _text_landed(text, viber_ocr.read_open_chat()["text"])
-        except viber_ocr.OCRError:
-            verified = None
+        verified = _verify_sent(text)
     finally:
         time.sleep(0.25)
         if saved is not None:
@@ -372,6 +423,37 @@ def _find_result_row(query: str, observations: list[dict], b: dict):
     return text, x, click_y, score
 
 
+def _search_open(name: str, b: dict) -> tuple[str, int]:
+    """Type `name` in the search box and click the best-matching result row.
+
+    Returns (matched_row_text, score). Raises SendError if no result matches.
+    """
+    # The left sidebar (with the search box) has a ~fixed pixel width regardless of window
+    # size, so the search field must be targeted by absolute pixel offset, not a fraction.
+    search_x = b["X"] + 175
+    search_y = b["Y"] + 52
+    _click(search_x, search_y)                        # focus the search field
+    time.sleep(0.4)
+    _key(_KEY_A, Quartz.kCGEventFlagMaskCommand)      # clear any previous query
+    time.sleep(0.1)
+    _key(_KEY_DELETE)
+    time.sleep(0.2)
+    _type(name)
+    time.sleep(1.6)                     # let results populate
+
+    _, obs = viber_ocr._capture_and_ocr()
+    match = _find_result_row(name, obs, b)
+    if match is None:
+        raise SendError(
+            f"No matching contact/chat found for '{name}' in Viber search. Try a fuller name "
+            "or use a phone number with open_chat."
+        )
+    matched_text, x, y, score = match
+    _click(x, y)
+    time.sleep(1.2)
+    return matched_text, score
+
+
 def search_and_open(name: str) -> dict:
     """Search Viber for `name` and open the best-matching result.
 
@@ -389,25 +471,7 @@ def search_and_open(name: str) -> dict:
 
     _focus_viber()
     b = _window_bounds()
-
-    _click(*_point((0.25, 0.08), b))   # click the search ✕ to clear any previous query
-    time.sleep(0.4)
-    _click(*_point(_SEARCH_FRAC, b))   # focus the search field
-    time.sleep(0.4)
-    _type(name)
-    time.sleep(1.6)                     # let results populate
-
-    _, obs = viber_ocr._capture_and_ocr()
-    match = _find_result_row(name, obs, b)
-    if match is None:
-        raise SendError(
-            f"No matching contact/chat found for '{name}' in Viber search. Try a fuller name "
-            "or use a phone number with open_chat."
-        )
-    matched_text, x, y, score = match
-    _click(x, y)
-    time.sleep(1.2)
-
+    matched_text, score = _search_open(name, b)
     result = _wait_for_sendable_chat(number=name, name=name, timeout=8.0)
     return {
         "query": name,
@@ -416,6 +480,56 @@ def search_and_open(name: str) -> dict:
         "opened": True,
         "text": result,
     }
+
+
+def open_my_notes() -> dict:
+    """Open Viber's private "My Notes" self-chat (found via search). Returns confirmation.
+
+    Raises SendError if the opened chat doesn't look like My Notes.
+    """
+    if not viber_is_running():
+        raise SendError("Viber is not running. Launch and sign in to Viber first.")
+    _focus_viber()
+    b = _window_bounds()
+    matched, score = _search_open("My Notes", b)
+    if "notes" not in matched.lower():
+        raise SendError(f"Could not confirm the My Notes chat opened (matched '{matched}').")
+    return {"opened": "My Notes", "matched": matched}
+
+
+def save_to_my_notes(text: str) -> dict:
+    """Save `text` to Viber's private "My Notes" self-chat.
+
+    Opens My Notes (via search), confirms the header is really My Notes, then pastes and
+    sends — like sending a message where the recipient is your own notes. The clipboard is
+    saved and restored.
+    """
+    if not text:
+        raise SendError("Refusing to save an empty note.")
+    if not viber_is_running():
+        raise SendError("Viber is not running. Launch and sign in to Viber first.")
+
+    saved = _get_clipboard()
+    verified = None
+    try:
+        _set_clipboard(text)
+        _focus_viber()
+        b = _window_bounds()
+        matched, score = _search_open("My Notes", b)
+        if "notes" not in matched.lower():
+            raise SendError(
+                f"Could not confirm My Notes opened (search matched '{matched}'); aborting to "
+                "avoid saving to the wrong chat."
+            )
+        _paste_into_compose(text, b)          # also closes the info panel if open
+        _click(*_send_point(b))    # click send
+        time.sleep(1.3)
+        verified = _verify_sent(text)
+    finally:
+        time.sleep(0.25)
+        if saved is not None:
+            _set_clipboard(saved)
+    return {"saved_to": "My Notes", "text": text, "sent": True, "verified": verified}
 
 
 def send_message(to: str, text: str, dry_run: bool = False) -> dict:
@@ -441,15 +555,9 @@ def send_message(to: str, text: str, dry_run: bool = False) -> dict:
         if dry_run:
             return {"recipient": number, "text": text, "sent": False, "dry_run": True}
 
-        _click(*_point(_SEND_BTN_FRAC, b))   # click send
+        _click(*_send_point(b))   # click send
         time.sleep(1.3)  # let the sent bubble render before verifying
-
-        # Verify the message actually appears in the conversation.
-        try:
-            ocr = viber_ocr.read_open_chat()["text"]
-            verified = _text_landed(text, ocr)
-        except viber_ocr.OCRError:
-            verified = None
+        verified = _verify_sent(text)
     finally:
         time.sleep(0.25)
         if saved is not None:

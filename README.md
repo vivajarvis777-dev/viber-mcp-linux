@@ -39,6 +39,8 @@ What's left — and what this uses — is the `viber://` URL scheme, HID-sourced
 | `open_chat(to)` | Bring a conversation to the foreground without sending. |
 | `open_and_read(to)` | Open a conversation and return its visible text in one step. |
 | `read_open_chat()` | OCR the currently-visible Viber window and return its text. |
+| `save_to_my_notes(text)` | Save a note to Viber's private "My Notes" self-chat (opens it via search, then sends). |
+| `open_my_notes()` | Open the "My Notes" self-chat without saving. |
 | `list_chats()` | List the sidebar chats (names, previews, times, unread counts) via OCR — a quick inbox overview. |
 | `put_draft(text)` | Paste `text` into the currently-open chat's compose box — no navigation, no send. For drafting a reply to review. |
 | `search_and_open(name)` | Search Viber by name and open the **best-matching** contact/chat (exact/prefix beats substring). Returns `matched` + `low_confidence`; verify before sending if `low_confidence`. |

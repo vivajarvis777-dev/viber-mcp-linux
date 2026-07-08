@@ -35,11 +35,14 @@ def find_viber_window() -> dict:
     windows = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID) or []
     # The macOS window owner is "Rakuten Viber" (the app's CFBundleName), so match
     # any owner containing "viber" rather than an exact string.
+    # Skip the tiny menu-bar / status window (e.g. 38x43) so we always get the main chat window.
     viber = [
         w
         for w in windows
         if "viber" in (w.get("kCGWindowOwnerName") or "").lower()
         and w.get("kCGWindowNumber")
+        and float(w.get("kCGWindowBounds", {}).get("Width", 0)) > 200
+        and float(w.get("kCGWindowBounds", {}).get("Height", 0)) > 200
     ]
     if not viber:
         raise OCRError(

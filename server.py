@@ -109,6 +109,26 @@ def put_draft(text: str) -> dict:
 
 
 @mcp.tool()
+def save_to_my_notes(text: str) -> dict:
+    """Save a note to Viber's private "My Notes" self-chat.
+
+    My Notes is a private conversation only you can see — good for saving reminders, links,
+    or snippets. Opens My Notes (via search), confirms it, and sends `text` there. Returns
+    whether it sent and `verified` (confirmed the box cleared after sending).
+
+    Args:
+        text: the note to save (emoji/unicode/newlines supported).
+    """
+    return viber_send.save_to_my_notes(text)
+
+
+@mcp.tool()
+def open_my_notes() -> dict:
+    """Open Viber's private "My Notes" self-chat without saving anything."""
+    return viber_send.open_my_notes()
+
+
+@mcp.tool()
 def read_open_chat() -> dict:
     """Read the currently-open Viber conversation via screen OCR.
 
