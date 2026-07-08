@@ -170,12 +170,20 @@ or break reliability. Keep these in mind when running the tools or editing `vibe
 | File | Purpose |
 |------|---------|
 | `server.py` | FastMCP stdio server; defines the tools |
-| `viber_send.py` | recipient resolution, HID-sourced input, send/draft logic |
-| `viber_ocr.py` | window discovery, capture, Apple Vision OCR |
+| `viber_send.py` | **platform-neutral** recipient resolution, send pipeline, search scoring |
+| `viber_ocr.py` | **platform-neutral** formatting of OCR observations into read results |
+| `backends/base.py` | `Backend` interface (semantic: observe, clicks, keys, clipboard) + `OCRError` |
+| `backends/macos.py` | macOS backend — the only file with OS APIs (Quartz/Vision/AppKit) + Viber layout |
+| `backends/__init__.py` | `get_backend()` selects a backend by platform |
 | `client.py` | standalone MCP client for testing |
 | `contacts.json` | your name → number map (git-ignored) |
 | `contacts.example.json` | template to copy |
 | `commands/viber-reply.md` | optional Claude Code slash command |
+
+**Porting:** add `backends/<os>.py` implementing `Backend`, wire it into `get_backend()`, and
+re-tune that platform's UI-element locations. All domain logic and tools are shared. (Windows can
+likely target elements via UI Automation instead of coordinates; Linux/Wayland restricts capture and
+synthetic input, so X11 is easier.)
 
 ## Limitations & caveats
 

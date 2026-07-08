@@ -6,7 +6,8 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "mcp[cli]>=1.28.1",
-    "pyobjc-framework-cocoa>=12.2.1",
-    "pyobjc-framework-quartz>=12.2.1",
-    "pyobjc-framework-vision>=12.2.1",
+    # macOS backend only — Windows/Linux backends will add their own platform-gated deps.
+    "pyobjc-framework-cocoa>=12.2.1 ; sys_platform == 'darwin'",
+    "pyobjc-framework-quartz>=12.2.1 ; sys_platform == 'darwin'",
+    "pyobjc-framework-vision>=12.2.1 ; sys_platform == 'darwin'",
 ]

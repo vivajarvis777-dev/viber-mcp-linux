@@ -1,54 +1,33 @@
-"""Send Viber messages by driving the desktop app via URL scheme + HID-sourced input.
+"""Send Viber messages and drive chat navigation — platform-neutral domain logic.
 
-Viber Desktop exposes no local API and its message DB is encrypted, so the only reliable
-send path is UI automation:
+All OS- and Viber-layout-specific work (window capture/OCR, synthetic input, clipboard, app
+focus, UI-element locations) is delegated to the platform `Backend` (see `backends/`). This
+module holds only the portable logic: recipient resolution, the send pipeline, search-result
+scoring, panel detection, and send verification.
 
-1. Open the target chat with the `viber://chat?number=` URL scheme (desktop needs a few
-   seconds to navigate, so we poll the window via OCR until a sendable chat is visible).
-2. Click the compose box and paste the text (clipboard paste survives emoji/unicode).
-3. Click the send button.
-
-Key detail: Viber is a Qt app that **ignores synthetic events unless they carry a real HID
-event source**. So every click/keystroke is created from
-`CGEventSourceCreate(kCGEventSourceStateHIDSystemState)`. Plain System Events keystrokes and
-plain CGEvents are silently dropped by Qt's input widgets.
-
-We click the send button rather than pressing Return because "Send message with Enter" may be
-off (then Return only inserts a newline).
-
-Requires: Viber running + signed in, and Accessibility + Screen Recording permission granted
-to the process that launches this code.
+Send pipeline: resolve recipient → open the `viber://` chat → poll (via OCR) until a sendable
+chat is confirmed → click compose, clear any draft, paste (clipboard, restored after) → click
+send → OCR-verify the box cleared. We click send rather than pressing Return because
+"Send message with Enter" may be off.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import subprocess
 import time
 from pathlib import Path
 
-import Quartz  # type: ignore
-from AppKit import NSPasteboard, NSStringPboardType  # type: ignore
-
 import viber_ocr
+from backends import get_backend
+
+backend = get_backend()
 
 CONTACTS_PATH = Path(__file__).with_name("contacts.json")
 
 # E.164: leading +, then 8–15 digits. We also accept bare digit strings and normalize them.
 _E164_RE = re.compile(r"^\+\d{8,15}$")
 _DIGITS_RE = re.compile(r"^\d{8,15}$")
-
-# macOS virtual key codes.
-_KEY_A = 0
-_KEY_V = 9
-_KEY_RETURN = 36
-_KEY_DELETE = 51
-_KEY_ESCAPE = 53
-
-# UI positions as fractions of the Viber window (measured on v28.2.0 with the contact-info
-# panel CLOSED). Recomputed from live window bounds each call.
-_COMPOSE_FRAC = (0.45, 0.96)
 
 
 class SendError(Exception):
@@ -60,7 +39,7 @@ class SendError(Exception):
 
 def viber_is_running() -> bool:
     """True if the Viber desktop app process is alive."""
-    return subprocess.run(["pgrep", "-x", "Viber"], capture_output=True).returncode == 0
+    return backend.app_running()
 
 
 def load_contacts() -> dict[str, str]:
@@ -110,85 +89,6 @@ def resolve_recipient(to: str) -> tuple[str, str | None]:
         f"Could not resolve recipient '{to}'. Provide an E.164 number (e.g. +639171234567) "
         f"or a name present in contacts.json. Known names: {known}"
     )
-
-
-# ------------------------------------------------------------------------ HID synthetic input
-
-_SRC = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
-
-
-def _post(event) -> None:
-    Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
-
-
-def _click(x: float, y: float) -> None:
-    down = Quartz.CGEventCreateMouseEvent(_SRC, Quartz.kCGEventLeftMouseDown, (x, y), Quartz.kCGMouseButtonLeft)
-    up = Quartz.CGEventCreateMouseEvent(_SRC, Quartz.kCGEventLeftMouseUp, (x, y), Quartz.kCGMouseButtonLeft)
-    _post(down)
-    time.sleep(0.06)
-    _post(up)
-
-
-def _key(code: int, flags: int = 0) -> None:
-    down = Quartz.CGEventCreateKeyboardEvent(_SRC, code, True)
-    up = Quartz.CGEventCreateKeyboardEvent(_SRC, code, False)
-    if flags:
-        Quartz.CGEventSetFlags(down, flags)
-        Quartz.CGEventSetFlags(up, flags)
-    _post(down)
-    time.sleep(0.03)
-    _post(up)
-
-
-def _type(text: str) -> None:
-    """Type `text` via HID keyboard events (handles unicode/emoji).
-
-    Explicitly clears modifier flags on every event: otherwise a lingering Cmd from a prior
-    Cmd+A can leak into the first character (e.g. "M" → Cmd+M = minimize window).
-    """
-    for ch in text:
-        for down in (True, False):
-            e = Quartz.CGEventCreateKeyboardEvent(_SRC, 0, down)
-            Quartz.CGEventSetFlags(e, 0)  # no modifiers — plain character
-            Quartz.CGEventKeyboardSetUnicodeString(e, len(ch), ch)
-            _post(e)
-            time.sleep(0.012)
-
-
-def _focus_viber() -> None:
-    subprocess.run(["open", "-b", "com.viber.osx"], check=False)
-    time.sleep(0.6)
-
-
-def _window_bounds() -> dict:
-    return viber_ocr.find_viber_window()["kCGWindowBounds"]
-
-
-def _point(frac: tuple[float, float], b: dict) -> tuple[float, float]:
-    return b["X"] + b["Width"] * frac[0], b["Y"] + b["Height"] * frac[1]
-
-
-def _send_point(b: dict) -> tuple[float, float]:
-    """The send button sits ~24px in from the bottom-right corner, independent of window size."""
-    return b["X"] + b["Width"] - 28, b["Y"] + b["Height"] - 30
-
-
-def _panel_close_point(b: dict) -> tuple[float, float]:
-    """The right-side panel's ✕ sits at the top-right corner, ~25px in / ~90px down."""
-    return b["X"] + b["Width"] - 25, b["Y"] + 90
-
-
-# ------------------------------------------------------------------------------ clipboard
-
-
-def _get_clipboard() -> str | None:
-    return NSPasteboard.generalPasteboard().stringForType_(NSStringPboardType)
-
-
-def _set_clipboard(text: str) -> None:
-    pb = NSPasteboard.generalPasteboard()
-    pb.clearContents()
-    pb.setString_forType_(text, NSStringPboardType)
 
 
 # ----------------------------------------------------------------------------- open / send
@@ -241,7 +141,7 @@ def open_chat(to: str, confirm: bool = True) -> str:
     if not viber_is_running():
         raise SendError("Viber is not running. Launch and sign in to Viber first.")
     number, name = resolve_recipient(to)
-    subprocess.run(["open", f"viber://chat?number={number}"], check=True)
+    backend.open_url(f"viber://chat?number={number}")
     if confirm:
         _wait_for_sendable_chat(number, name)
     else:
@@ -283,38 +183,40 @@ _PANEL_MARKERS = {
     "clear chat", "set background", "hide completed notes", "delete chat",
     "settings", "add to groups", "participants",
 }
+
+
 def _side_panel_open(observations: list[dict]) -> bool:
     return any(
         o["x"] > 0.80 and o["text"].strip().lower() in _PANEL_MARKERS for o in observations
     )
 
 
-def _ensure_panel_closed(b: dict) -> None:
+def _ensure_panel_closed() -> None:
     """Close any right-side panel if open (it displaces the send button). Retries once."""
     for _ in range(2):
         try:
-            _, obs = viber_ocr._capture_and_ocr()
+            obs = backend.observe()
         except viber_ocr.OCRError:
             return
         if not _side_panel_open(obs):
             return
-        _click(*_panel_close_point(b))
+        backend.click_panel_close()
         time.sleep(0.6)
 
 
-def _paste_into_compose(text: str, b: dict) -> None:
-    """Click the compose box of the open chat, clear any draft, and paste `text` (no send).
+def _paste_into_compose(text: str) -> None:
+    """Focus the compose box of the open chat, clear any draft, and paste `text` (no send).
 
-    Assumes `text` is already on the clipboard. `b` is the live window bounds.
+    Assumes `text` is already on the clipboard.
     """
-    _ensure_panel_closed(b)                           # panel would displace the send button
-    _click(*_point(_COMPOSE_FRAC, b))                 # focus compose box
+    _ensure_panel_closed()          # a panel would displace the send button
+    backend.click_compose()
     time.sleep(0.4)
-    _key(_KEY_A, Quartz.kCGEventFlagMaskCommand)      # select any leftover draft
+    backend.select_all()            # select any leftover draft
     time.sleep(0.1)
-    _key(_KEY_DELETE)                                  # clear it
+    backend.delete()                # clear it
     time.sleep(0.15)
-    _key(_KEY_V, Quartz.kCGEventFlagMaskCommand)      # paste
+    backend.paste()
     time.sleep(0.4)
 
 
@@ -329,15 +231,15 @@ def paste_into_open_chat(text: str) -> dict:
     if not viber_is_running():
         raise SendError("Viber is not running. Launch and sign in to Viber first.")
 
-    saved = _get_clipboard()
+    saved = backend.clipboard_get()
     try:
-        _set_clipboard(text)
-        _focus_viber()
-        _paste_into_compose(text, _window_bounds())
+        backend.clipboard_set(text)
+        backend.focus()
+        _paste_into_compose(text)
     finally:
         time.sleep(0.25)
         if saved is not None:
-            _set_clipboard(saved)
+            backend.clipboard_set(saved)
     return {"drafted": True, "sent": False, "text": text}
 
 
@@ -352,20 +254,19 @@ def reply(text: str) -> dict:
     if not viber_is_running():
         raise SendError("Viber is not running. Launch and sign in to Viber first.")
 
-    saved = _get_clipboard()
+    saved = backend.clipboard_get()
     verified = None
     try:
-        _set_clipboard(text)
-        _focus_viber()
-        b = _window_bounds()
-        _paste_into_compose(text, b)
-        _click(*_send_point(b))
+        backend.clipboard_set(text)
+        backend.focus()
+        _paste_into_compose(text)
+        backend.click_send()
         time.sleep(1.3)  # let the sent bubble render before verifying
         verified = _verify_sent(text)
     finally:
         time.sleep(0.25)
         if saved is not None:
-            _set_clipboard(saved)
+            backend.clipboard_set(saved)
     return {"sent": True, "text": text, "verified": verified}
 
 
@@ -401,8 +302,8 @@ def _score_result(query: str, text: str) -> int:
     return -1
 
 
-def _find_result_row(query: str, observations: list[dict], b: dict):
-    """Pick the best-matching result row; return (text, x, y, score) or None.
+def _find_result_row(query: str, observations: list[dict]):
+    """Pick the best-matching result row; return (text, norm_y, score) or None.
 
     Only considers the left column (the results list). Prefers exact/prefix matches over
     substrings so, e.g., searching "Ivy" opens "Ivy Cloma-Rosales", not "Divya".
@@ -417,39 +318,32 @@ def _find_result_row(query: str, observations: list[dict], b: dict):
     if not candidates:
         return None
     candidates.sort(key=lambda c: (-c[0], c[1]))  # best score, then topmost
-    score, y, text = candidates[0]
-    x = b["X"] + b["Width"] * 0.14
-    click_y = b["Y"] + b["Height"] * y
-    return text, x, click_y, score
+    score, norm_y, text = candidates[0]
+    return text, norm_y, score
 
 
-def _search_open(name: str, b: dict) -> tuple[str, int]:
+def _search_open(name: str) -> tuple[str, int]:
     """Type `name` in the search box and click the best-matching result row.
 
     Returns (matched_row_text, score). Raises SendError if no result matches.
     """
-    # The left sidebar (with the search box) has a ~fixed pixel width regardless of window
-    # size, so the search field must be targeted by absolute pixel offset, not a fraction.
-    search_x = b["X"] + 175
-    search_y = b["Y"] + 52
-    _click(search_x, search_y)                        # focus the search field
+    backend.click_search()
     time.sleep(0.4)
-    _key(_KEY_A, Quartz.kCGEventFlagMaskCommand)      # clear any previous query
+    backend.select_all()            # clear any previous query
     time.sleep(0.1)
-    _key(_KEY_DELETE)
+    backend.delete()
     time.sleep(0.2)
-    _type(name)
-    time.sleep(1.6)                     # let results populate
+    backend.type_text(name)
+    time.sleep(1.6)                 # let results populate
 
-    _, obs = viber_ocr._capture_and_ocr()
-    match = _find_result_row(name, obs, b)
+    match = _find_result_row(name, backend.observe())
     if match is None:
         raise SendError(
             f"No matching contact/chat found for '{name}' in Viber search. Try a fuller name "
             "or use a phone number with open_chat."
         )
-    matched_text, x, y, score = match
-    _click(x, y)
+    matched_text, norm_y, score = match
+    backend.click_result(norm_y)
     time.sleep(1.2)
     return matched_text, score
 
@@ -469,9 +363,8 @@ def search_and_open(name: str) -> dict:
     if not viber_is_running():
         raise SendError("Viber is not running. Launch and sign in to Viber first.")
 
-    _focus_viber()
-    b = _window_bounds()
-    matched_text, score = _search_open(name, b)
+    backend.focus()
+    matched_text, score = _search_open(name)
     result = _wait_for_sendable_chat(number=name, name=name, timeout=8.0)
     return {
         "query": name,
@@ -489,9 +382,8 @@ def open_my_notes() -> dict:
     """
     if not viber_is_running():
         raise SendError("Viber is not running. Launch and sign in to Viber first.")
-    _focus_viber()
-    b = _window_bounds()
-    matched, score = _search_open("My Notes", b)
+    backend.focus()
+    matched, score = _search_open("My Notes")
     if "notes" not in matched.lower():
         raise SendError(f"Could not confirm the My Notes chat opened (matched '{matched}').")
     return {"opened": "My Notes", "matched": matched}
@@ -500,7 +392,7 @@ def open_my_notes() -> dict:
 def save_to_my_notes(text: str) -> dict:
     """Save `text` to Viber's private "My Notes" self-chat.
 
-    Opens My Notes (via search), confirms the header is really My Notes, then pastes and
+    Opens My Notes (via search), confirms the match is really My Notes, then pastes and
     sends — like sending a message where the recipient is your own notes. The clipboard is
     saved and restored.
     """
@@ -509,26 +401,25 @@ def save_to_my_notes(text: str) -> dict:
     if not viber_is_running():
         raise SendError("Viber is not running. Launch and sign in to Viber first.")
 
-    saved = _get_clipboard()
+    saved = backend.clipboard_get()
     verified = None
     try:
-        _set_clipboard(text)
-        _focus_viber()
-        b = _window_bounds()
-        matched, score = _search_open("My Notes", b)
+        backend.clipboard_set(text)
+        backend.focus()
+        matched, score = _search_open("My Notes")
         if "notes" not in matched.lower():
             raise SendError(
                 f"Could not confirm My Notes opened (search matched '{matched}'); aborting to "
                 "avoid saving to the wrong chat."
             )
-        _paste_into_compose(text, b)          # also closes the info panel if open
-        _click(*_send_point(b))    # click send
+        _paste_into_compose(text)     # also closes the info panel if open
+        backend.click_send()
         time.sleep(1.3)
         verified = _verify_sent(text)
     finally:
         time.sleep(0.25)
         if saved is not None:
-            _set_clipboard(saved)
+            backend.clipboard_set(saved)
     return {"saved_to": "My Notes", "text": text, "sent": True, "verified": verified}
 
 
@@ -544,24 +435,23 @@ def send_message(to: str, text: str, dry_run: bool = False) -> dict:
 
     number = open_chat(to, confirm=True)
 
-    saved = _get_clipboard()
+    saved = backend.clipboard_get()
     verified = None
     try:
-        _set_clipboard(text)
-        _focus_viber()
-        b = _window_bounds()
-        _paste_into_compose(text, b)
+        backend.clipboard_set(text)
+        backend.focus()
+        _paste_into_compose(text)
 
         if dry_run:
             return {"recipient": number, "text": text, "sent": False, "dry_run": True}
 
-        _click(*_send_point(b))   # click send
+        backend.click_send()
         time.sleep(1.3)  # let the sent bubble render before verifying
         verified = _verify_sent(text)
     finally:
         time.sleep(0.25)
         if saved is not None:
-            _set_clipboard(saved)
+            backend.clipboard_set(saved)
 
     return {
         "recipient": number,

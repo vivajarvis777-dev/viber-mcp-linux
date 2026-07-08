@@ -36,19 +36,39 @@ After editing server code, the **registered** MCP server keeps running the old c
 
 ## Architecture
 
+The code is split into **platform-neutral domain logic** and a **platform Backend** (so the app is
+port-ready for Windows/Linux — see "Porting" below):
+
 - `server.py` — FastMCP stdio server; thin `@mcp.tool()` wrappers only. Tools: `send_message`,
   `reply`, `open_chat`, `open_and_read`, `read_open_chat`, `list_chats`, `put_draft`,
   `search_and_open`, `save_to_my_notes`, `open_my_notes`, `list_contacts`.
-- `viber_send.py` — all write/navigation logic: recipient resolution (`contacts.json` alias → E.164),
-  HID synthetic input, opening chats, sending. Raises `SendError`.
-- `viber_ocr.py` — read side: find the Viber window, `screencapture` it, run Apple Vision
-  (`VNRecognizeTextRequest`). `ocr_observations()` returns text with normalized (x,y) positions;
-  `read_open_chat()` returns full-window text; `read_chat_list()` filters to the left sidebar.
+- `viber_send.py` — **platform-neutral** write/navigation logic: recipient resolution
+  (`contacts.json` alias → E.164), the send pipeline, search-result scoring, panel detection, send
+  verification. Holds a module-level `backend = get_backend()` and calls only its semantic methods.
+  Raises `SendError`.
+- `viber_ocr.py` — **platform-neutral** read side: `read_open_chat()` / `read_chat_list()` format
+  `backend.observe()` output (`read_chat_list` keeps only left-column x<0.30). Raises `OCRError`.
+- `backends/` — the platform layer.
+  - `base.py` — `Backend` ABC + `OCRError`. Semantic interface: `app_running/focus/open_url`,
+    `observe()→[{text,x,y}]`, clipboard, `type_text/select_all/delete/paste`, and element clicks
+    `click_compose/send/search/result(norm_y)/panel_close`. The domain never sees pixels or key codes.
+  - `macos.py` — `MacBackend`: all Quartz/Vision/AppKit code AND the macOS Viber-layout constants
+    (element pixel/fraction offsets). This is the only file with OS APIs.
+  - `__init__.py` — `get_backend()` picks the backend by `sys.platform` (macOS only today).
 - `client.py` — standalone MCP stdio client for testing.
 - `contacts.json` — name→E.164 map, **git-ignored (real numbers)**; ship `contacts.example.json`.
 
-Data flow for a send: resolve recipient → `viber://chat?number=` → poll OCR until the chat is
-confirmed → click compose → clear draft → paste (clipboard, restored after) → click send → OCR-verify.
+Data flow for a send: resolve recipient → `backend.open_url("viber://chat?number=…")` → poll
+`backend.observe()` until the chat is confirmed → `click_compose` → `select_all`+`delete` → `paste`
+(clipboard, restored after) → `click_send` → OCR-verify the box cleared.
+
+## Porting to another OS
+
+Add `backends/<os>.py` implementing `Backend`, wire it into `get_backend()`, and re-tune that
+platform's element locations. Two realities: **Windows** should likely implement the `click_*`
+methods via **UI Automation** (Qt exposes a usable UIA tree on Windows) instead of coordinates —
+more robust; **Linux/Wayland** heavily restricts capture + synthetic input (X11 is far easier). The
+domain logic, tool definitions, and `contacts.json` handling are already shared and need no changes.
 
 ## Critical, non-obvious constraints (most bugs here come from violating these)
 
