@@ -141,9 +141,29 @@ uv run client.py read                              # OCR the open chat
   appeared. The clipboard is saved and restored around the paste.
 - **Receive**: the largest on-screen window owned by "Rakuten Viber" is captured with
   `screencapture -l <id>` and OCR'd by `VNRecognizeTextRequest`. It only sees what's on screen.
-- Compose-box and send-button positions are computed from the live window bounds, assuming the
-  contact-info **side panel is closed**. If Viber's layout changes, adjust `_COMPOSE_FRAC` /
-  `_SEND_BTN_FRAC` in `viber_send.py`.
+
+## Automation constraints
+
+Because there's no API — only synthetic input + OCR against a Qt app — a few non-obvious rules make
+or break reliability. Keep these in mind when running the tools or editing `viber_send.py`:
+
+- **Synthetic input must use a real HID event source.** Qt silently drops plain `CGEvent`s and
+  System Events keystrokes; the code posts every click/keystroke from
+  `CGEventSourceCreate(kCGEventSourceStateHIDSystemState)`.
+- **Sidebar, search box, send button, and panel-close ✕ are targeted by fixed PIXEL offsets from the
+  window edges — not fractions.** The sidebar and side panels have fixed pixel widths, so
+  fraction-based clicks miss on wide/maximized windows.
+- **Any right-side panel (chat-info or sticker "Settings") must be closed before sending** — it
+  shifts the send button. The code detects and closes it automatically.
+- **Sending clicks the send button; it does not press Return** ("Send message on Enter" may be off).
+- **`viber://` chat navigation is slow and mobile-first** — the code polls via OCR until the target
+  chat is confirmed, and refuses to send if the number "isn't on Viber". You cannot message your own
+  number ("cannot add yourself"); My Notes is a separate chat.
+- **Keep Viber in a normal window on the main desktop — not macOS fullscreen.** Fullscreen puts it on
+  a separate Space, causing window-ID churn and blank captures. Don't resize it mid-operation, and
+  prefer keeping side panels closed.
+- **OCR sees only on-screen text** and can garble small/emoji text or interleave the sidebar with the
+  open conversation; the returned `verified` flag is best-effort (false negatives are common).
 
 ## Project layout
 
