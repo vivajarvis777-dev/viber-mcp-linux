@@ -1,206 +1,71 @@
-# Viber MCP (macOS)
+# Viber MCP Linux
 
-An [MCP](https://modelcontextprotocol.io) server that lets an AI assistant (e.g. Claude) **send and
-read Viber messages** by driving your already-running, signed-in **Viber Desktop** app on macOS.
+Linux-порт [wawimundo/viber-mcp](https://github.com/wawimundo/viber-mcp) з усіма **11 назвами інструментів upstream**, реальним AT-SPI backend і захистом від непогодженого надсилання. MIT / авторство Wawi del Mundo збережені. Базовий SHA: `af1d0ed1b880dc28a18f2d5198a4d09b52047bd4`.
 
-Viber has no local/public API and its message database is encrypted, so this works entirely through
-UI automation:
+**Статус:** domain-тести, справжній MCP stdio і реальний AT-SPI на ізольованому синтетичному GTK-застосунку перевірені. **Працездатність саме на Viber Desktop ще НЕ підтверджена.** Жодного читання приватних чатів, керування реальною Viber-сесією або відправлення не виконано. Немає відкаліброваного Viber UI profile: до цього GUI fail-closed. Це не твердження про завершену desktop E2E-паритетність.
 
-- **Send** — open the chat via the `viber://` URL scheme, paste the text, and click the send button.
-- **Receive** — capture the visible Viber window and OCR it with Apple's Vision framework.
+## Запуск без доступу до GUI
 
-> ⚠️ **Unofficial.** Not affiliated with, endorsed by, or supported by Viber / Rakuten. It automates
-> the desktop UI on your own machine and account. UI automation is inherently version-sensitive and
-> may break when Viber updates. Use at your own risk and review your account's terms of service.
-
----
-
-## Why it works this way
-
-Three hard constraints shaped the design (all verified on Viber v28.2.0):
-
-- **The message DB is unreadable.** `~/Library/Application Support/ViberPC/<number>/viber.db` is
-  encrypted with a Botan page codec (random header, not `SQLite format 3`), with no public
-  key-derivation recipe. So history can't be read from disk.
-- **The accessibility tree is unusable.** Viber is a Qt app; AX queries hang, so there's no
-  element tree to read or click.
-- **Qt ignores ordinary synthetic input.** Every click/keystroke must be generated from a real HID
-  event source (`CGEventSourceCreate(kCGEventSourceStateHIDSystemState)`) — plain `CGEvent`s and
-  System Events keystrokes are silently dropped by Qt's input widgets.
-
-What's left — and what this uses — is the `viber://` URL scheme, HID-sourced input, and screen OCR.
-
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `send_message(to, text, dry_run=False)` | Open the chat for `to`, confirm it, paste `text`, click send, and OCR-verify it landed. `dry_run` pastes into the box but doesn't send. |
-| `reply(text)` | Send `text` into the **currently-open** chat — no navigation. Pair with `read_open_chat`. |
-| `open_chat(to)` | Bring a conversation to the foreground without sending. |
-| `open_and_read(to)` | Open a conversation and return its visible text in one step. |
-| `read_open_chat()` | OCR the currently-visible Viber window and return its text. |
-| `save_to_my_notes(text)` | Save a note to Viber's private "My Notes" self-chat (opens it via search, then sends). |
-| `open_my_notes()` | Open the "My Notes" self-chat without saving. |
-| `list_chats()` | List the sidebar chats (names, previews, times, unread counts) via OCR — a quick inbox overview. |
-| `put_draft(text)` | Paste `text` into the currently-open chat's compose box — no navigation, no send. For drafting a reply to review. |
-| `search_and_open(name)` | Search Viber by name and open the **best-matching** contact/chat (exact/prefix beats substring). Returns `matched` + `low_confidence`; verify before sending if `low_confidence`. |
-| `list_contacts()` | Return the name → number aliases from `contacts.json`. |
-
-`to` is either an **E.164 number** (`+639171234567`) or a **name defined in `contacts.json`**.
-Unknown names error out rather than guess a recipient. `send_message` returns `verified: true` when
-the sent message is confirmed on screen (`false` = not seen, `null` = couldn't check).
-
-## Requirements
-
-- macOS (tested on macOS 15/26, Apple Silicon)
-- Viber Desktop installed, running, and signed in
-- [`uv`](https://docs.astral.sh/uv/) (Python is managed by `uv`)
-
-## Install
-
-```bash
-git clone <your-fork-url> viber-mcp
-cd viber-mcp
-uv sync
-cp contacts.example.json contacts.json   # then edit with your real contacts
+```sh
+uv sync --locked
+uv run python server.py
 ```
 
-### macOS permissions (required)
+Transport — лише stdio. stdout зарезервовано для MCP. `health`, `list_contacts` без налаштованого файла, `stop` безпечні без дисплея. За замовчуванням GUI і надсилання вимкнено. Linux ніколи не імпортує старі macOS евристики; оригінальні файли залишені для атрибуції та інших платформ (`README.upstream.md`, `upstream_server.py`, `viber_send.py`, `backends/`). Не використовуйте `viber_send.py` як Linux entrypoint.
 
-Grant these to the app that launches the server (your terminal — iTerm/Terminal — or Claude),
-in **System Settings → Privacy & Security**:
+## Архітектура
 
-- **Accessibility** — synthetic clicks/keystrokes (sending).
-- **Screen Recording** — window capture (reading + send verification).
+`server.py → linux_server.py (FastMCP) → linux_domain.Service → linux_backend.LinuxBackend → atspi_worker.py → GI AT-SPI`.
 
-The first send/read fails with a clear message until these are granted. After granting, **fully quit
-and reopen** the host app so the permission binds.
+- Кожна UI-операція — окремий короткоживучий процес `/usr/bin/python3`, timeout 8 секунд; міжпроцесний `flock` і thread mutex охоплюють усю domain-транзакцію. Очікування mutex обмежене 2 секундами. Загальний час транзакції — сума обмежених викликів, не один глобальний 8-секундний deadline.
+- Unicode вводиться через AT-SPI EditableText, з точним readback, а не ASCII-сигнатурою чи xdotool typing. Clipboard, миша та modifier keys не використовуються. Persistent grabs/служби/cua-driver відсутні.
+- `stop` позначає поточну операцію скасованою та вбиває worker; наступні операції починають нову транзакцію. Немає клавіш, які залишаються натиснутими. Невідоме завершення надсилання не повторюється.
+- Читання обмежене селектором `conversation` або `sidebar`; clipboard та повне вікно не знімаються. OCR не використовується як доказ адресата/доставки. Поточний backend AT-SPI-only: якщо Viber не експортує потрібні інтерфейси, він зупиняється, а не вдає OCR-успіх.
 
-> If you get `not allowed to send keystrokes` (error 1002) while the toggle already looks on, reset
-> the stuck TCC entry and relaunch:
-> `tccutil reset Accessibility <your-terminal-bundle-id>` (e.g. `com.googlecode.iterm2`,
-> `com.apple.Terminal`).
+## Налаштування GUI — тільки після окремого дозволу на desktop-приймання
 
-## Configure contacts
+Потрібні Linux X11 desktop із accessibility bus, системний Python з `python3-gi`, бібліотека `libatspi2.0-0` і typelib `gir1.2-atspi-2.0`. На цій машині typelib для синтетичних тестів розпаковано лише користувацьки, без sudo та зміни системних пакетів.
 
-`contacts.json` maps friendly names to E.164 numbers (it is **git-ignored** — it holds real numbers):
+Змінні:
 
-```json
-{
-  "Me": "+639171234567",
-  "Mom": "+639181234567"
-}
+| Змінна | Призначення |
+|---|---|
+| `VIBER_ALLOW_GUI=1` | явне ввімкнення GUI; відсутня — блокування |
+| `VIBER_UI_PROFILE` | абсолютний шлях до приватного, перевіреного profile |
+| `VIBER_ATSPI_PYTHON` | Python із GI; типово `/usr/bin/python3` |
+| `GI_TYPELIB_PATH` | лише якщо typelib встановлено користувацьки |
+| `DISPLAY`, `DBUS_SESSION_BUS_ADDRESS` | перевірена користувацька графічна сесія; не копіювати історичні значення |
+| `VIBER_CONTACTS_FILE` | приватний JSON `{ "alias": "exact-phone" }` |
+| `VIBER_STATE_DIR` | приватний каталог 0700, типово `~/.local/state/viber-mcp-linux` |
+| `VIBER_ENABLE_SEND=1` | надсилання можливе лише разом із незалежним approval token |
+
+Profile містить `application`, `window: {role,name}`, `selectors` із шляхами **прямих дочірніх** accessible вузлів `{role,name,description?}`: `identity`, `composer`, `search`, `results`, `conversation`, `sidebar`, `send`. Кожен сегмент мусить знайти рівно один вузол. `identity` повинен бути номером у contact details, не display name/placeholder. `self_description` — незалежний маркер self-chat, підтверджений самим застосунком; назва «My Notes» не є доказом. `outgoing_message` — selector row, `message_id_attribute` — стабільний ID повідомлення (типово `message-id`).
+
+**Не вигадуйте production profile.** Синтетичний тест генерує profile лише для свого GTK-вікна; він не підходить для Viber. Чи Viber експортує EditableText, independent self marker, outgoing direction і stable message ID — наразі невідомо. Якщо ні, потрібна додаткова адаптація після дозволеного дослідження; не послаблювати перевірку. Особливо не видавати порожній composer за доказ надсилання.
+
+## Адресат і безпека надсилання
+
+- Literal `0981901991` зберігається без змін. Код **не додає** `+`, країну чи інший префікс. Національний literal і E.164 — різні ідентифікатори; невідповідність UI блокує дію. Відповідність між ними не припускається.
+- `search_and_open` відкриває лише єдиний **точний** результат. Без alias mapping повертає observed phone із contact-details і `recipient_verified:false`, `send_authorized:false`; display name не стає дозволом на надсилання. Prefix/substring fallback upstream навмисно вилучений.
+- Існуючий інший draft не стирається і не замінюється. Його треба змінити вручну. Ідентичний draft можна повторно перевірити. Search field зберігається і відновлюється.
+- Усі send-шляхи, включно з `reply` і My Notes, потребують **одного незалежного людського погодження точного recipient+text**. MCP інструмента approve немає. `reply(text)` залишає назву/базовий аргумент upstream, але для реальної дії вимагає додаткові `to` та `approval_token`.
+- Людина запускає `uv run python approve.py --recipient <exact-literal>` у своєму терміналі, вводить точний текст у JSON-форматі й підтверджує його. Схвалення живе 5 хвилин, витрачається один раз. Код не зберігає текст/адресата у ledger, лише digest, token і terminal state. Токен не комітити/не логувати.
+- Ця церемонія відділяє MCP від погодження, **але не ізолює зловмисний процес того самого Unix-користувача**: якщо агенту дозволений unrestricted shell, політика має забороняти йому запускати approve або змінювати ledger. Для ворожого same-UID процесу потрібен окремий broker/UID, не реалізований тут.
+- Стани: `blocked` (не намагалися), `sent` (нова outgoing bubble зі stable ID, точним Unicode та порожнім composer), `unknown` (клік/timeout без достатнього доказу). `delivered` завжди `null`: UI не доводить доставку адресату. Claim зберігається **до** GUI: crash/replay ніколи не запускає повторне надсилання.
+- Верифікація виконується також усередині worker безпосередньо перед write/send. UI не є атомарною транзакцією щодо дій людини: не користуйтеся Viber паралельно під час дозволеного тесту.
+
+Для цього завдання **ніякий outbound draft не погоджений**. Дозволений майбутній реальний тестовий literal лише `0981901991`. My Notes не є дозволеним тестовим адресатом.
+
+## Відтворення тестів
+
+```sh
+uv run python -m pytest --cov=linux_domain --cov=linux_backend --cov-report=term-missing -q
+uv run python tests/protocol_smoke.py
+# Окремий Xvfb і приватний D-Bus, ніколи не активна сесія Viber:
+GI_TYPELIB_PATH=/home/hannelora/.local/opt/viber-mcp-atspi/usr/lib/x86_64-linux-gnu/girepository-1.0 \
+  dbus-run-session -- /usr/bin/python3 tests/synthetic_desktop_smoke.py
 ```
 
-Names that aren't in the file must be given as full E.164 numbers.
+Синтетичний desktop-тест потребує також GTK3, `Xvfb`, `dbus-run-session` та `TMPDIR` у дозволеному scratch. Він сам закриває GTK і Xvfb; D-Bus завершується разом із `dbus-run-session`. Локальна кнопка «Synthetic Send» змінює тільки GTK-widget, не викликає Viber/network. Наприкінці D-Bus інколи пише `A connection to the bus can't be made` від допоміжного GVfs після завершення bus; тест завершується exit 0.
 
-## Use it from Claude Code
-
-Register the server (user scope):
-
-```bash
-claude mcp add --transport stdio --scope user viber -- \
-  uv --directory "$(pwd)" run server.py
-```
-
-Check with `claude mcp list` (should show `viber … ✓ Connected`). After editing the server code,
-reconnect so Claude reloads it (`/mcp` → reconnect `viber`, or restart Claude Code). Remove with
-`claude mcp remove viber`.
-
-### `/viber-reply` slash command (optional convenience)
-
-Copy `commands/viber-reply.md` into `~/.claude/commands/` (user scope) or your project's
-`.claude/commands/`. It reads the open chat, drafts a reply in your voice, and pastes it into the
-compose box **without sending** — you review and send.
-
-```
-/viber-reply
-/viber-reply keep it short and warm; say I'll call tonight
-```
-
-## Use it standalone (no Claude)
-
-A small MCP client is included for testing:
-
-```bash
-uv run client.py list                              # advertise tools
-uv run client.py contacts                          # show alias map
-uv run client.py open "Mom"                        # open a chat
-uv run client.py send "Mom" "hello" --dry-run      # fill box, don't send
-uv run client.py send "Mom" "hello"                # actually send
-uv run client.py draft "a reply to review"         # drop draft in open chat (not sent)
-uv run client.py read                              # OCR the open chat
-```
-
-## How it works (details)
-
-- **Send**: `open viber://chat?number=<E164>` opens the chat (desktop navigation takes a few
-  seconds, so the window is polled via OCR until the recipient's chat is confirmed — and the send is
-  refused if the number "isn't on Viber"). Then: click the compose box, clear any draft, paste the
-  clipboard text (emoji/unicode/newlines survive), click the send button, and OCR-verify the bubble
-  appeared. The clipboard is saved and restored around the paste.
-- **Receive**: the largest on-screen window owned by "Rakuten Viber" is captured with
-  `screencapture -l <id>` and OCR'd by `VNRecognizeTextRequest`. It only sees what's on screen.
-
-## Automation constraints
-
-Because there's no API — only synthetic input + OCR against a Qt app — a few non-obvious rules make
-or break reliability. Keep these in mind when running the tools or editing `viber_send.py`:
-
-- **Synthetic input must use a real HID event source.** Qt silently drops plain `CGEvent`s and
-  System Events keystrokes; the code posts every click/keystroke from
-  `CGEventSourceCreate(kCGEventSourceStateHIDSystemState)`.
-- **Sidebar, search box, send button, and panel-close ✕ are targeted by fixed PIXEL offsets from the
-  window edges — not fractions.** The sidebar and side panels have fixed pixel widths, so
-  fraction-based clicks miss on wide/maximized windows.
-- **Any right-side panel (chat-info or sticker "Settings") must be closed before sending** — it
-  shifts the send button. The code detects and closes it automatically.
-- **Sending clicks the send button; it does not press Return** ("Send message on Enter" may be off).
-- **`viber://` chat navigation is slow and mobile-first** — the code polls via OCR until the target
-  chat is confirmed, and refuses to send if the number "isn't on Viber". You cannot message your own
-  number ("cannot add yourself"); My Notes is a separate chat.
-- **Keep Viber in a normal window on the main desktop — not macOS fullscreen.** Fullscreen puts it on
-  a separate Space, causing window-ID churn and blank captures. Don't resize it mid-operation, and
-  prefer keeping side panels closed.
-- **OCR sees only on-screen text** and can garble small/emoji text or interleave the sidebar with the
-  open conversation; the returned `verified` flag is best-effort (false negatives are common).
-
-## Project layout
-
-| File | Purpose |
-|------|---------|
-| `server.py` | FastMCP stdio server; defines the tools |
-| `viber_send.py` | **platform-neutral** recipient resolution, send pipeline, search scoring |
-| `viber_ocr.py` | **platform-neutral** formatting of OCR observations into read results |
-| `backends/base.py` | `Backend` interface (semantic: observe, clicks, keys, clipboard) + `OCRError` |
-| `backends/macos.py` | macOS backend — the only file with OS APIs (Quartz/Vision/AppKit) + Viber layout |
-| `backends/__init__.py` | `get_backend()` selects a backend by platform |
-| `client.py` | standalone MCP client for testing |
-| `contacts.json` | your name → number map (git-ignored) |
-| `contacts.example.json` | template to copy |
-| `commands/viber-reply.md` | optional Claude Code slash command |
-
-**Porting:** add `backends/<os>.py` implementing `Backend`, wire it into `get_backend()`, and
-re-tune that platform's UI-element locations. All domain logic and tools are shared. (Windows can
-likely target elements via UI Automation instead of coordinates; Linux/Wayland restricts capture and
-synthetic input, so X11 is easier.)
-
-## Limitations & caveats
-
-- **OCR sees only on-screen text** — scroll to bring older messages into view; it can garble text
-  or interleave the sidebar's chat previews with the conversation.
-- **No message history from disk** (encrypted DB).
-- **Names** resolve from `contacts.json` — Viber's own contact list can't be read.
-- **Version-sensitive**: a Viber UI/layout change can require small coordinate tweaks.
-- Messaging your **own number** is blocked by Viber ("cannot add yourself"); "My Notes" is separate.
-
-## Privacy & security
-
-- Runs **entirely locally**; it does not send your messages or contacts anywhere except into Viber.
-- `contacts.json` is git-ignored so real numbers don't get committed.
-- Requires powerful macOS permissions (Accessibility, Screen Recording) for the host app — grant
-  only if you understand and trust that.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+Детальна матриця: [PARITY.md](PARITY.md). Фактичні результати: [EVIDENCE.md](EVIDENCE.md). Секрети, UI profiles, контакти, state, сесії, знімки екрана не комітити.

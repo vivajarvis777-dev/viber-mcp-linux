@@ -18,3 +18,19 @@ contacts.json
 # Scratch / captures
 *.png
 scratchpad/
+.env
+.env.*
+*.sqlite*
+*.db
+*.session
+*.log
+*.jpeg
+*.jpg
+*.webp
+*.wav
+*.mp3
+.coverage*
+htmlcov/
+.pytest_cache/
+ui-profile.json
+state/

@@ -1,13 +1,19 @@
 [project]
-name = "viber-mcp"
-version = "0.1.0"
-description = "MCP server to send and read Viber Desktop messages on macOS via UI automation"
+name = "viber-mcp-linux"
+version = "0.2.0"
+description = "Fail-closed Linux AT-SPI Viber MCP; desktop acceptance pending"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "mcp[cli]>=1.28.1",
+    "mcp[cli]>=1.28.1,<2",
     # macOS backend only — Windows/Linux backends will add their own platform-gated deps.
     "pyobjc-framework-cocoa>=12.2.1 ; sys_platform == 'darwin'",
     "pyobjc-framework-quartz>=12.2.1 ; sys_platform == 'darwin'",
     "pyobjc-framework-vision>=12.2.1 ; sys_platform == 'darwin'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
 ]

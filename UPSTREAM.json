@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/wawimundo/viber-mcp",
+  "commit": "af1d0ed1b880dc28a18f2d5198a4d09b52047bd4",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Wawi del Mundo",
+  "original_server_copy": "upstream_server.py",
+  "linux_entrypoint": "server.py",
+  "upstream_tools": ["send_message", "open_chat", "open_and_read", "reply", "search_and_open", "list_chats", "put_draft", "save_to_my_notes", "open_my_notes", "read_open_chat", "list_contacts"]
+}
