@@ -2,6 +2,7 @@
 import json
 import sys
 import time
+from linux_errors import reason_code
 
 
 def run(req, Atspi):
@@ -137,5 +138,5 @@ if __name__ == '__main__':
         gi.require_version('Atspi', '2.0')
         from gi.repository import Atspi
         print(json.dumps({'result': run(json.load(sys.stdin), Atspi)}, ensure_ascii=False))
-    except Exception:
-        print(json.dumps({'error': 'AT-SPI unavailable or strict selector/verification failed'}))
+    except Exception as error:
+        print(json.dumps({'error': reason_code(error)}))

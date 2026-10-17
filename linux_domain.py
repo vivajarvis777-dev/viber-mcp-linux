@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from linux_backend import LinuxBackend, SafetyError
+from linux_errors import reason_code
 
 
 def digest(recipient, text):
@@ -67,7 +68,13 @@ class Ledger:
 
 
 class Service:
-    def __init__(self, backend=None, state=None, contacts=None, send_enabled=None):
+    def __init__(self, backend=None, state=None, contacts=None, send_enabled=None,
+                 verification_timeout=3.0, poll_interval=0.1):
+        if not 0 < verification_timeout <= 30 or not 0 < poll_interval <= 1:
+            raise ValueError('Invalid verification timing bounds')
+        self.verification_timeout = verification_timeout
+        self.poll_interval = poll_interval
+        self.cancelled = threading.Event()
         self.backend = backend or LinuxBackend()
         self.root = Path(state or os.getenv('VIBER_STATE_DIR', str(Path.home()/'.local/state/viber-mcp-linux')))
         self.contacts_path = contacts or os.getenv('VIBER_CONTACTS_FILE')
@@ -92,6 +99,7 @@ class Service:
                 except BlockingIOError:
                     if time.monotonic() >= deadline: raise SafetyError('desktop busy')
                     time.sleep(.05)
+            self.cancelled.clear()
             self.backend.reset()
             yield
         finally:
@@ -165,6 +173,35 @@ class Service:
     def put_draft(self, text):
         self.validate_text(text)
         with self.transaction(): return self.draft(self.identity(), text)
+    def wait_for_send(self, recipient, text, before):
+        """Observe only; never repeat the send, write, or navigation action.
+
+        Deadline bounds starting new observations; an in-flight backend call
+        has its own bounded timeout and is interrupted by stop().
+        """
+        deadline = time.monotonic() + self.verification_timeout
+        while True:
+            if self.cancelled.is_set(): raise SafetyError('cancelled')
+            if time.monotonic() >= deadline:
+                raise SafetyError('Send verification deadline exceeded')
+            self.verify(recipient)
+            draft = self.backend.draft()
+            if draft not in ('', text):
+                raise SafetyError('Draft changed during verification')
+            after = self.backend.messages()
+            self.verify(recipient)
+            final_draft = self.backend.draft()
+            if final_draft not in ('', text):
+                raise SafetyError('Draft changed during verification')
+            if self.cancelled.is_set(): raise SafetyError('cancelled')
+            if time.monotonic() >= deadline:
+                raise SafetyError('Send verification deadline exceeded')
+            if final_draft == '' and any(
+                m['id'] not in before and m['text'] == text and
+                m.get('outgoing') is True for m in after
+            ):
+                return True
+            self.cancelled.wait(min(self.poll_interval, max(0, deadline-time.monotonic())))
     def send(self, recipient, text, token, navigate=False):
         self.validate_text(text)
         if not self.send_enabled: raise SafetyError('Sending disabled')
@@ -182,14 +219,13 @@ class Service:
                 if self.backend.draft() != text: raise SafetyError('Draft changed before send')
                 attempted = True
                 self.backend.send(recipient, text)
-                self.verify(recipient)
-                after = self.backend.messages()
-                verified = self.backend.draft() == '' and any(m['id'] not in before and m['text'] == text and m.get('outgoing') is True for m in after)
+                verified = self.wait_for_send(recipient, text, before)
                 result = {'status': 'sent' if verified else 'unknown', 'attempted': True,
                           'sent': True if verified else None, 'delivered': None, 'verified': verified}
-            except Exception:
+            except Exception as error:
                 result = {'status': 'unknown' if attempted else 'blocked', 'attempted': attempted,
-                          'sent': None if attempted else False, 'delivered': None, 'verified': False}
+                          'sent': None if attempted else False, 'delivered': None, 'verified': False,
+                          'reason': reason_code(error)}
             finally:
                 self.store().finish(token, result)
             return result
@@ -208,4 +244,6 @@ class Service:
     def save_to_my_notes(self, text, approval_token=None):
         return self.send('self:my-notes',text,approval_token,navigate=True)
     def health(self): return self.backend.health()
-    def stop(self): return self.backend.stop()
+    def stop(self):
+        self.cancelled.set()
+        return self.backend.stop()

@@ -21,7 +21,7 @@
 1. **Unit/domain fixture:** усі 11 шляхів, включно з notes/send, працюють проти явно синтетичного backend; це не Viber.
 2. **Справжній MCP stdio:** initialize, tools/list, усі 11 tools/call у безпечному disabled режимі; health/list_contacts/stop success; desktop/send paths fail closed.
 3. **Справжній AT-SPI + GTK:** ізольовані Xvfb/D-Bus, реальний accessibility IPC, text read/write, exact search, local button action, scoped reads. Синтетична кнопка не відправляє повідомлення.
-4. **Viber Desktop E2E:** **НЕ перевірено для всіх GUI-шляхів**. Немає дозволу читати поточні приватні чати чи вводити GUI; не брали керування desktop. Немає погодженого тексту для реального `0981901991`.
+4. **Viber Desktop E2E:** **НЕ перевірено для всіх GUI-шляхів**. Дозволене read-only discovery 2026-10-18 знайшло конкретний blocker: немає Viber/XFCE процесів, X11 socket і accessibility bus socket; історична сесія hannelora `closing`. Дерево реального Viber недоступне. Не читали приватні чати, не вводили GUI, не відкривали інші чати. Немає погодженого тексту для реального `0981901991`.
 
 ## Межі, які не можна приховувати
 
@@ -32,4 +32,6 @@
 - Мінімальна «людина погодила» церемонія не є захистом від довільного shell того самого UID; для такого threat model потрібен окремий broker.
 - Upstream клієнтські демонстрації/команди зберігаються для атрибуції; Linux API використовує `server.py`/`linux_server.py`, а не небезпечні legacy send функції.
 
-Наступний крок — незалежний code review і погодження narrowly scoped desktop-калібровки. Потім лише literal `0981901991`, і надсилання тільки після погодження точного тексту. Не тестувати My Notes наживо.
+Незалежний review додав cancelable polling асинхронної outgoing bubble, повторні identity/draft checks і sanitized reason codes. Це перевірено синтетично; жодного реального send. Replay protection обмежене тим самим approval token: новий token може повторити текст, business-event idempotency немає.
+
+Наступний крок — Господар відновлює власну desktop-сесію/Viber або окремо погоджує конкретне відновлення. Потім повторити вузьке read-only discovery без читання приватного тексту та відкалібрувати profile за реальними доказами. Лише literal `0981901991`; надсилання тільки після погодження точного тексту. Не тестувати My Notes наживо. OCR/clipboard fallback не додавали без доступного реального UI: історична нотатка про clipboard не доводить безпечної інтеграції чи готовності поточного backend.

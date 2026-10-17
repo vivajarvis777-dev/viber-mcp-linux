@@ -2,7 +2,7 @@
 
 Linux-порт [wawimundo/viber-mcp](https://github.com/wawimundo/viber-mcp) з усіма **11 назвами інструментів upstream**, реальним AT-SPI backend і захистом від непогодженого надсилання. MIT / авторство Wawi del Mundo збережені. Базовий SHA: `af1d0ed1b880dc28a18f2d5198a4d09b52047bd4`.
 
-**Статус:** domain-тести, справжній MCP stdio і реальний AT-SPI на ізольованому синтетичному GTK-застосунку перевірені. **Працездатність саме на Viber Desktop ще НЕ підтверджена.** Жодного читання приватних чатів, керування реальною Viber-сесією або відправлення не виконано. Немає відкаліброваного Viber UI profile: до цього GUI fail-closed. Це не твердження про завершену desktop E2E-паритетність.
+**Статус:** domain-тести, справжній MCP stdio і реальний AT-SPI на ізольованому синтетичному GTK-застосунку перевірені. **Працездатність саме на Viber Desktop ще НЕ підтверджена.** Read-only discovery 2026-10-18: немає процесів Viber/XFCE, socket історичного X11 display та accessibility bus відсутні; сесія hannelora `closing`. Тому Qt EditableText і реальні селектори не перевірені; profile не вигаданий. Приватні чати не читалися, GUI input і відправлення не виконувалися. Це не завершена desktop E2E-паритетність. Успадкований `CLAUDE.md` застарілий (його виправлення заблокував захист instruction-файлів); актуальні Linux-статус і команди — тут, у `PARITY.md` та `EVIDENCE.md`.
 
 ## Запуск без доступу до GUI
 
@@ -51,7 +51,9 @@ Profile містить `application`, `window: {role,name}`, `selectors` із ш
 - Усі send-шляхи, включно з `reply` і My Notes, потребують **одного незалежного людського погодження точного recipient+text**. MCP інструмента approve немає. `reply(text)` залишає назву/базовий аргумент upstream, але для реальної дії вимагає додаткові `to` та `approval_token`.
 - Людина запускає `uv run python approve.py --recipient <exact-literal>` у своєму терміналі, вводить точний текст у JSON-форматі й підтверджує його. Схвалення живе 5 хвилин, витрачається один раз. Код не зберігає текст/адресата у ledger, лише digest, token і terminal state. Токен не комітити/не логувати.
 - Ця церемонія відділяє MCP від погодження, **але не ізолює зловмисний процес того самого Unix-користувача**: якщо агенту дозволений unrestricted shell, політика має забороняти йому запускати approve або змінювати ledger. Для ворожого same-UID процесу потрібен окремий broker/UID, не реалізований тут.
-- Стани: `blocked` (не намагалися), `sent` (нова outgoing bubble зі stable ID, точним Unicode та порожнім composer), `unknown` (клік/timeout без достатнього доказу). `delivered` завжди `null`: UI не доводить доставку адресату. Claim зберігається **до** GUI: crash/replay ніколи не запускає повторне надсилання.
+- Стани: `blocked` (не намагалися), `sent` (нова outgoing bubble зі stable ID, точним Unicode та порожнім composer), `unknown` (клік/timeout без достатнього доказу). `delivered` завжди `null`: UI не доводить доставку адресату. Claim зберігається **до** GUI: crash/replay **того самого token** не запускає повторне надсилання. Це не business-event idempotency: новий погоджений token дозволяє повторити той самий recipient+text.
+- Після єдиної send-дії — лише cancelable polling (типово 3 секунди, інтервал 0.1 секунди), з identity/draft recheck до й після читання bubbles. Інший draft/recipient негайно дає `unknown`; deadline без доказу — `reason:verification_timeout`. Немає повторного click, write чи navigation. Кожний backend IPC має окремий timeout 8 секунд: бюджет polling не є end-to-end deadline транзакції; поточний цикл може завершитися пізніше. `stop` будить очікування і вбиває поточний worker.
+- `blocked`/`unknown` повертають лише allowlisted `reason` (наприклад, `editable_text_unsupported`, `text_interface_missing`, `selector_missing_or_ambiguous`, `recipient_changed`, `draft_changed`, `cancelled`). Невідомі exceptions згортаються до `operation_failed`; приватний текст помилок не повертається.
 - Верифікація виконується також усередині worker безпосередньо перед write/send. UI не є атомарною транзакцією щодо дій людини: не користуйтеся Viber паралельно під час дозволеного тесту.
 
 Для цього завдання **ніякий outbound draft не погоджений**. Дозволений майбутній реальний тестовий literal лише `0981901991`. My Notes не є дозволеним тестовим адресатом.
@@ -59,7 +61,7 @@ Profile містить `application`, `window: {role,name}`, `selectors` із ш
 ## Відтворення тестів
 
 ```sh
-uv run python -m pytest --cov=linux_domain --cov=linux_backend --cov-report=term-missing -q
+uv run python -m pytest --cov=linux_domain --cov=linux_backend --cov=linux_errors --cov-report=term-missing -q
 uv run python tests/protocol_smoke.py
 # Окремий Xvfb і приватний D-Bus, ніколи не активна сесія Viber:
 GI_TYPELIB_PATH=/home/hannelora/.local/opt/viber-mcp-atspi/usr/lib/x86_64-linux-gnu/girepository-1.0 \

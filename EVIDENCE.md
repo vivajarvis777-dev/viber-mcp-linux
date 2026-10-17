@@ -10,7 +10,7 @@ Command:
 .venv/bin/python -m pytest --cov=linux_domain --cov=linux_backend --cov-report=term-missing -q
 ```
 
-Actual final run:
+Initial baseline run (before the follow-up below):
 
 ```text
 33 passed in 2.75s
@@ -63,3 +63,61 @@ See Git commit and final remote SHA readback for the exact delivered revision. N
 ## Still unverified / not implemented
 
 See PARITY.md. No real Viber profile, Qt EditableText, self marker, stable message ID or delivery evidence verified. Linux OCR fallback and clipboard fallback are not implemented; unavailable accessibility fails closed. A same-UID shell is outside the approval-ceremony trust boundary. Full live operational parity must NOT be claimed from these tests.
+
+## Independent follow-up — 2026-10-18 CEST
+
+Starting revision: `68e7431eb9bc79a47270a93691b95cefea42af98`;
+`git ls-remote origin refs/heads/main` matched before editing. RTK mode remained
+`rewrite`. No production/configuration/credential restart or persistent driver.
+
+### Actual desktop evidence (read-only, no private contents)
+
+- Read canonical `Infrastructure/Henelora-Desktop.md`; its historical `:11.0`
+  session and earlier Viber/clipboard tests were not assumed to be live.
+- Targeted `/proc/*/comm` discovery found no Viber or XFCE process for any UID;
+  only a root-owned Xorg among the queried desktop executable names. Own process
+  environment contained no DISPLAY; session bus was `/run/user/1003/bus`.
+- `loginctl show-session c7 -p State -p Active -p Type -p Display -p Remote`:
+  `Display=:11`, `Remote=no`, `Type=x11`, `Active=yes`, **`State=closing`**.
+  Active=yes alone does not prove an operational desktop.
+- `/tmp/.X11-unix` existed but contained no X sockets. Read-only Unix socket
+  connect to `/tmp/.X11-unix/X11` returned errno 2 (absent).
+- `/run/user/1003/at-spi/bus` absent. Existing old at-spi launcher/registry process
+  names did not prove usable IPC. A timeout-bound GI Atspi registry probe failed
+  before obtaining a tree: `Failed to connect to socket /run/user/1003/at-spi/bus:
+  No such file or directory`; libatspi terminated with SIGTRAP. No app text was
+  read or persisted. Do not repeat full tree probes until session IPC is restored.
+- Consequently Qt EditableText **support remains unknown**, not proven absent.
+  No Viber roles/interfaces/selectors were available to calibrate. No screenshots,
+  sidebar/history reads, input, navigation, clipboard mutation or actual sends.
+  OCR/clipboard fallbacks remain unimplemented rather than built around invented
+  UI coordinates/semantics. This is a bounded blocker report, not full adaptation.
+
+### Changes and verification
+
+- Post-send observation now polls without resending, with repeated identity and
+  protected-draft checks, bounded wait and cancellation. Async render, timeout,
+  cancellation, recipient/draft change and replay tested against fake backend.
+- Closed reason codes expose missing interfaces/selectors without raw UI/errors;
+  malformed/untrusted worker error output is sanitized. Per-token replay is
+  explicitly not business-event idempotency; fresh approval may resend same text.
+- `.venv/bin/python -m pytest --cov=linux_domain --cov=linux_backend --cov=linux_errors --cov-report=term-missing -q`:
+  **49 passed in 9.17s**. Module coverage: backend 94%, domain 97%, errors 78%,
+  combined 96% (295 statements, 13 missed). Excludes actual Viber/Qt compatibility.
+- `.venv/bin/python tests/protocol_smoke.py`: exit 0, upstream 11/11,
+  health/contacts/send_disabled/stop passed, `live_viber:false`.
+- `GI_TYPELIB_PATH=/home/hannelora/.local/opt/viber-mcp-atspi/usr/lib/x86_64-linux-gnu/girepository-1.0 dbus-run-session -- /usr/bin/python3 tests/synthetic_desktop_smoke.py`:
+  exit 0, real AT-SPI identity/Unicode/exact-search/scoped-read/local-button checks
+  passed on private GTK/Xvfb only; `live_viber:false`. Expected GVfs bus teardown
+  notice followed completion. No shared desktop attached.
+- Authenticated official GitHub GET `/repos/vivajarvis777-dev/viber-mcp-linux`
+  returned `private:true`, `default_branch:main`, exact full_name. Existing
+  authorized BWS `GITHUB_TOKEN` held only in process memory, never printed;
+  `gh` CLI unavailable, official API used instead. No credential changes.
+- `git diff --check` and compileall of changed Python modules/tests completed
+  successfully. Fixture Python PIDs were absent after completion. One pre-existing
+  own Xvfb process started 2026-09-28 was observed and left untouched; it is not
+  evidence of a usable shared Viber session.
+- Updating inherited `CLAUDE.md` was explicitly denied by the protected
+  instruction-file write guard. No bypass or second write attempted; it remains
+  inaccurate. README now points to current Linux status and this exact blocker.

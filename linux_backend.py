@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import threading
+from linux_errors import CODES
 
 
 class SafetyError(RuntimeError):
@@ -55,11 +56,19 @@ class LinuxBackend:
             self.process = p
         try:
             out, _ = p.communicate(json.dumps(request, ensure_ascii=False), timeout=self.timeout)
+            if self.cancelled.is_set():
+                raise SafetyError('cancelled')
             if p.returncode:
                 raise SafetyError('AT-SPI operation failed; no retry')
-            response = json.loads(out)
+            try:
+                response = json.loads(out)
+                if not isinstance(response, dict) or not ('error' in response or 'result' in response):
+                    raise ValueError()
+            except (ValueError, TypeError):
+                raise SafetyError('AT-SPI operation failed; no retry') from None
             if 'error' in response:
-                raise SafetyError(response['error'])
+                code = response['error']
+                raise SafetyError(code if isinstance(code, str) and code in CODES else 'operation_failed')
             return response['result']
         except subprocess.TimeoutExpired:
             p.kill()
