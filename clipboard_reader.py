@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import sys
+from linux_diagnostics import phase, record
 
 MAX_BYTES = 1024 * 1024
 
@@ -29,8 +30,9 @@ def selection_bytes(selection):
     return data
 
 
-def main():
+def read_once():
     try:
+        record('clipboard_init_start', 'checkpoint')
         os.environ['NO_AT_BRIDGE'] = '1'
         os.environ['GTK_MODULES'] = ''
         os.environ['GDK_BACKEND'] = 'x11'
@@ -41,15 +43,24 @@ def main():
         from gi.repository import Gdk, Gtk
         if not Gtk.init_check()[0]:
             raise ValueError('display unavailable')
+        record('clipboard_init_ready', 'checkpoint')
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         target = Gdk.Atom.intern('UTF8_STRING', False)
-        data = selection_bytes(clipboard.wait_for_contents(target))
+        record('clipboard_convert_start', 'checkpoint')
+        selection = clipboard.wait_for_contents(target)
+        record('clipboard_convert_done', 'checkpoint')
+        data = selection_bytes(selection)
         print(json.dumps({'utf8_base64': base64.b64encode(data).decode('ascii')}))
     except Exception:
         # Never print exception/UI data. The parent maps this to a closed reason.
         print(json.dumps({'error': 'clipboard_failed'}))
         return 1
     return 0
+
+
+def main():
+    with phase(os.getenv('VIBER_DIAGNOSTIC_PHASE', 'setup')):
+        return read_once()
 
 
 if __name__ == '__main__':

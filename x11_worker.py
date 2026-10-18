@@ -22,7 +22,7 @@ import uuid
 
 from linux_backend import SafetyError
 from linux_errors import reason_code
-from linux_diagnostics import phase, record, restore_after
+from linux_diagnostics import current_phase, phase, record, restore_after
 
 
 def command_kind(args):
@@ -49,7 +49,7 @@ def record_process_error(kind, error, timeout):
         record(kind, 'os')
 
 
-def command(args, data=None, timeout=3):
+def command(args, data=None, timeout=3, allow_no_match=False):
     try:
         return subprocess.run(args, input=data, capture_output=True,
                               check=True, timeout=timeout,
@@ -58,6 +58,9 @@ def command(args, data=None, timeout=3):
         record(command_kind(args), 'timeout', timeout=timeout)
         raise SafetyError('ui_command_failed') from None
     except subprocess.CalledProcessError as error:
+        if (allow_no_match and args[:2] == ['xdotool', 'search'] and error.returncode == 1
+                and not (error.stdout or b'').strip() and not (error.stderr or b'').strip()):
+            return b''  # xdotool's explicit no-match result, not a failed query.
         record(command_kind(args), 'exit', returncode=error.returncode)
         raise SafetyError('ui_command_failed') from None
     except OSError:
@@ -151,10 +154,8 @@ class Desktop:
             raise SafetyError('gui_disabled_or_profile_missing')
         if not os.getenv('DISPLAY') or os.getenv('XDG_SESSION_TYPE') == 'wayland':
             raise SafetyError('x11_required')
-        try:
-            ids = command(['xdotool', 'search', '--onlyvisible', '--class', '^(Viber|ViberPC)$']).decode().split()
-        except SafetyError:
-            raise SafetyError('window_missing_or_ambiguous') from None
+        ids = command(['xdotool', 'search', '--onlyvisible', '--class', '^(Viber|ViberPC)$'],
+                      allow_no_match=True).decode().split()
         if len(ids) != 1 or not ids[0].isdigit():
             raise SafetyError('window_missing_or_ambiguous')
         self.wid = ids[0]
@@ -314,7 +315,8 @@ class Desktop:
         try:
             output = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True,
                                     timeout=3, check=True, close_fds=True,
-                                    env={**os.environ, 'LC_ALL': 'C.UTF-8'})
+                                    env={**os.environ, 'LC_ALL': 'C.UTF-8',
+                                         'VIBER_DIAGNOSTIC_PHASE': current_phase()})
         except (OSError, subprocess.SubprocessError) as error:
             record_process_error('clipboard', error, 3)
             raise SafetyError('clipboard_failed') from None

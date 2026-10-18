@@ -81,3 +81,14 @@ approval rows0. Діагностика цього разу збережена. R
 довжиною0. ExceptionGroup — wrapper; primary event identity_copy/clipboard/timeout3s.
 Живий ввід ще не працює. Новий trial/очищення/рестарт не погоджені; поточний
 marker виключає повторне використання цієї згоди.
+
+## Пріоритет: справжні збережені контакти
+
+Вимогу narrowed до Viber address book. Feasibility: ручні aliases не підходять;
+read-only schema не підтвердила saved-contact provider/chat binding. Новий adapter
+або fake allowlist не додано. Details: docs/SAVED-CONTACTS.md. Новий live-огляд
+книги потребує окремого погодження; Copy number debugging більше не розширюємо.
+
+Збережені корисні diagnostic fixes: query timeout не означає missing window;
+GTK init/convert checkpoints;3 isolated Xvfb stall cases пройшли.166 unit tests
+і protocol smoke пройшли; timeout/retry/recipient guards не послаблено.

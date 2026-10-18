@@ -13,8 +13,13 @@ PHASES = {'setup', 'identity', 'draft', 'write', 'navigate', 'send', 'read',
           'identity_copy', 'clipboard_restore'}
 COMMANDS = {'window_search', 'window_focus', 'window_pid', 'window_geometry',
             'pointer', 'keyboard', 'clipboard', 'native_text', 'other', 'worker',
-            'diagnostic_probe'}
-FAILURES = {'timeout', 'exit', 'os', 'cleanup', 'worker_exit', 'probe'}
+            'diagnostic_probe', 'clipboard_init_start', 'clipboard_init_ready',
+            'clipboard_convert_start', 'clipboard_convert_done'}
+FAILURES = {'timeout', 'exit', 'os', 'cleanup', 'worker_exit', 'probe', 'checkpoint'}
+
+
+def current_phase():
+    return _phase.get()
 
 
 @contextmanager

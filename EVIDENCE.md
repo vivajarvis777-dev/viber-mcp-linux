@@ -625,3 +625,54 @@ acceptance-VBR-20261018-STRICT-01.jsonl, both in the existing owner-only state
 directory. The marker records consumed=true/completed=true and the independent
 post-check. Local review manifest is updated to executed=true. This trial and
 its approval cannot authorize another attempt. Runtime/Remmina/access unchanged.
+
+## Isolated STRICT-01 cascade analysis; no new live UI
+
+Confirmed classification defect: Desktop.__init__ caught any window-search
+SafetyError and reported window_missing_or_ambiguous. Fixed to preserve query
+errors; only xdotool search exit1 with empty stdout/stderr is treated as no match.
+Unit cases cover timeout, OSError, exit1+stderr, other exit codes and actual no match.
+The special exit handling cannot suppress an input-command failure.
+
+Added fixed private helper checkpoints: clipboard_init_start (before GI import),
+clipboard_init_ready, clipboard_convert_start and clipboard_convert_done. Parent
+phase is passed as a validated enum. init_start alone does NOT prove XOpenDisplay
+is the blocked function; it includes GI/GTK initialization. convert_done only
+means the request returned, not that its data were valid. No raw content is logged.
+
+Fresh-Xvfb models passed:
+- silent selection owner: helper reaches convert_start and times out3s, but a new
+  X connection responds and the synthetic writer succeeds.
+- owner holds XGrabServer before helper initialization: only init_start appears;
+  reader3s, restore-writer2s, focus3s and search3s time out. Search now reports
+  ui_command_failed rather than claiming a missing window.
+- owner grabs the server on UTF8 request: helper reaches convert_start, followed
+  by the same3/2/3/3 cascade.
+Terminating only the fixture owner releases its grab; post-release root queries
+work, and no-match search correctly reports no matching window. No real DISPLAY,
+clipboard, editor, runtime service, access right or Remmina setting was touched.
+
+These results show that broad X-server blocking can reproduce STRICT-01's
+cascade; silence of a selection owner alone did not reproduce it in this model.
+They do NOT establish that real Viber/RDP grabbed the server, identify a culprit
+or prove the old strace's XOpenDisplay stall is the cause of STRICT-01. Existing
+logs cannot distinguish initialization from conversion wait; new checkpoints
+make that distinction testable in a separately approved future observation.
+166 tests passed in10.22s plus real MCP protocol smoke. The three new isolated
+models passed and are included in X11 CI. No timeout increase/retry or identity
+guard reduction was introduced.
+
+## Saved-address-book-only scope update
+
+The owner narrowed recipients to actually saved Viber contacts (relayed reference
+Sentinel_c602d0fc96f0819189bbc81c65593ba6). Code review confirms list_contacts is
+manual aliases, not an address-book reader; neither alias/current chat/history
+nor duplicate-capable display names can establish saved membership or binding.
+Only metadata of already accessible profile files was examined: three .db files,
+two with SQLite headers. Read-only immutable schema inspection shows config.db
+account/settings tables and data.db generic Key/Category/Value; no row values
+or credentials were read. The other file's lack of SQLite header does not prove
+encryption. There is no verified saved-contactID→active-chat provider in the
+current implementation/evidence. No unsupported adapter or alias allowlist was
+substituted. See docs/SAVED-CONTACTS.md for the bounded next read-only research
+proposal. Removing identity clipboard would still leave clipboard text paste.

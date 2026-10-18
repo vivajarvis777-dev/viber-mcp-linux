@@ -48,10 +48,14 @@ def owner(mode):
     change = bind('XChangeProperty', integer, [ptr, ul, ul, ul, integer, integer, ptr, integer])
     send = bind('XSendEvent', integer, [ptr, ul, integer, C.c_long, ptr])
     flush = bind('XFlush', integer, [ptr])
+    sync = bind('XSync', integer, [ptr, integer])
+    grab = bind('XGrabServer', integer, [ptr])
     next_event = bind('XNextEvent', integer, [ptr, ptr])
     window = create(opened, root, 0, 0, 1, 1, 0, 0, 0)
     set_owner(opened, atoms['CLIPBOARD'], window, 0)
-    bind('XSync', integer, [ptr, integer])(opened, 0)
+    if mode == 'grab_init':
+        grab(opened)
+    sync(opened, 0)
     print(json.dumps({'ready': True, 'window': window}), flush=True)
     switched = False
     while True:
@@ -64,6 +68,9 @@ def owner(mode):
             data = (ul * 3)(atoms['TARGETS'], atoms['UTF8_STRING'], atoms['STRING'])
             change(opened, request.requestor, prop, atoms['ATOM'], 32, 0, data, 3)
         elif request.target == atoms['UTF8_STRING'] and mode == 'silent':
+            continue
+        elif request.target == atoms['UTF8_STRING'] and mode == 'grab_convert':
+            grab(opened); sync(opened, 0)
             continue
         elif (request.target == atoms['UTF8_STRING'] and mode in ('empty', 'unicode', 'wrongtype', 'switch')) or (
                 request.target == atoms['STRING'] and mode == 'fallback'):

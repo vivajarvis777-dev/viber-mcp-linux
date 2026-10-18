@@ -115,3 +115,18 @@ UTF8_STRING не доводить, що власник справді відда
 
 Джерела: [xsel1.2.1](https://github.com/kfish/xsel/blob/8c89a9225ea898b67c5a067d1a7f8e78f0a458aa/xsel.c),
 [Gtk wait_for_contents](https://docs.gtk.org/gtk3/method.Clipboard.wait_for_contents.html).
+
+## Відрізнення selection timeout від ширшого X11 stall
+
+Нові fixed checkpoints у private log: clipboard_init_start (включає GI import),
+clipboard_init_ready, clipboard_convert_start, clipboard_convert_done. Done не
+означає валідні дані; результат ще перевіряється. Події checkpoint/probe не є
+помилками — primary failure визначається серед timeout/exit/os подій.
+Діагностичний шлях trial має лишатися свіжим до acceptance preflight: окремі
+попередні read-only observations повинні мати інший шлях або вимкнений журнал,
+щоб не створити його завчасно. Повторне використання trial path заборонене.
+
+Ізольований silent owner не блокував нові X connections; fake XGrabServer
+відтворив reader3s→writer2s→focus3s→search3s. Це модель можливого механізму, не
+доказ провини Viber/RDP. Нових live вимірювань не було. Query timeout більше
+не перейменовується на відсутність вікна.
