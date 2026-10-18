@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Viber
+Comment=Rakuten Viber
+Exec=@APP_RUN@
+Icon=viber
+Terminal=false
+Categories=Network;InstantMessaging;
+StartupWMClass=Viber

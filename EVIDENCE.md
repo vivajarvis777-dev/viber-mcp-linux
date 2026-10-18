@@ -1,5 +1,78 @@
 # Verification evidence
 
+## Live follow-up — 2026-10-18, after desktop restoration
+
+This section supersedes the historical no-desktop blocker below, not the absence
+of operational parity. Starting revision: `76a1868ebcd20ea193e018a280942a42ef457a8d`.
+
+- Live DISPLAY `:10.0`, own XFCE and Viber process present; visible Viber window
+  initially found with WM_CLASS `Viber`, `ViberPC`, size 950x780. A tightly cropped
+  top/header image showed an authenticated view, not a QR/login prompt. No chat
+  history, draft, other conversation or My Notes was intentionally inspected.
+- `org.a11y.Bus.GetAddress` returned `/run/user/1003/at-spi/bus` but socket connect
+  raised ENOENT. Probe stopped before importing libatspi. Thus a live X11 session
+  does NOT fix stale accessibility registration; actual Qt interfaces remain
+  unverified. No service or Viber restart attempted.
+- Actual cropped header OCR with locally extracted Tesseract 5.3.4 returned:
+  `phone_candidates:1`, `literal_match_observed:false`,
+  `international_form_observed:true`, `recipient_verified:false`,
+  `send_authorized:false`. No normalization/mapping inferred, raw OCR and screenshots
+  excluded from Git/docs. This proves image-to-OCR, not recipient authorization.
+- Before the new pause instruction, a foreground request failed with BadWindow;
+  subsequent class searches found no Viber window, while the same process remained.
+  The new `x11_probe.py` CLI's guarded capture path was NOT live-verified end-to-end.
+  It is isolated read-only calibration, not an operational OCR/clipboard backend.
+- User then reported Viber offline / failed manual self-message. All UI automation
+  paused immediately; no retry of the user's potentially queued message. No message
+  contents, account database contents or raw private logs read for diagnosis.
+- At 04:29 UTC, own Viber process remained sleeping in poll with 62 threads, and one
+  established TCP connection to `52.0.252.3:443`, send/receive queues both zero.
+  TCP counters showed 850 bytes sent and 5601 received, last data traffic roughly
+  329 seconds earlier. No process proxy environment variables found; no open log
+  files; stderr is a pipe and was NOT consumed. HTTPS www.viber.com returned 200.
+  **This rules out a total host Internet outage, not an app/session failure.**
+  An established (possibly idle) socket proves neither Viber authentication nor
+  successful message delivery. Root cause not determined; no invented proxy/TLS fix.
+- Parent independently inspected the user-provided screenshot: exact red banner
+  **No internet connection**, empty central pane. This is verified application-level
+  offline, not merely an inference from a failed send. Screenshot not copied to Git.
+- Static installed-binary domain discovery followed by bounded parallel DNS/TCP443/
+  verified TLS probes to `connect.viber.com`, `core.viber.com`, `chats.viber.com`,
+  `conf.viber.com`, `account.viber.com`: all five resolved and completed verified
+  TLS 1.3. No HTTP payload, authentication or messages sent. These are candidate
+  service domains from binary strings, NOT proven current messaging destinations.
+  Their reachability does not establish Viber's own Qt TLS/auth/session state;
+  selective service/port failure or app-level fault remains unresolved.
+- Safe next diagnostic: once the user's manual testing is finished, inspect only
+  the application's offline/status banner or a narrowly redacted error source.
+  Restart/relink/reset, proxy/firewall changes require separate concrete approval.
+  Also obtain explicit mapping authorization before using an international number
+  for the exact allowed national literal; never retry any queued message.
+
+### Artifacts and executed checks
+
+- `desktop/Viber.desktop.in`, `install_launcher.py`: portable template matching
+  parent-created launcher, exclusive create, executable destination, input validation;
+  no launch, trust setting or overwrite. Rendered real AppRun launcher in scratch
+  and `desktop-file-validate` returned exit 0. Existing Desktop launcher unchanged.
+- `x11_probe.py`: explicit GUI opt-in, narrow header geometry, foreground and UID/PID
+  validation, bounded subprocesses, in-memory PNG to Tesseract, non-authorizing
+  boolean-only output. No clipboard/write/send functionality. System Python Pillow
+  already available; OCR debs extracted user-locally, no sudo/system install.
+- `tests/test_calibration.py`: launcher validation/refusal/overwrite protection,
+  header scope/geometry, exact literals, OCR ambiguity and non-authorization,
+  missing accessibility transport, GUI-disabled and sanitized command failure.
+- `.venv/bin/python -m pytest -q`: **72 passed in 9.60s**.
+- Real MCP smoke: exit 0, all upstream 11 names, safe disabled calls passed,
+  `live_viber:false`.
+- Real isolated GTK/Xvfb/AT-SPI smoke: exit 0, identity, Unicode readback, exact
+  search, scoped reads and local button action passed; `live_viber:false`.
+- Protected `CLAUDE.md` untouched. No sends, drafts, clipboard changes, persistent
+  grabs, cua-driver, service/model/credential changes. Full Linux operational
+  port remains incomplete pending accessibility/session diagnosis and calibration.
+
+## Historical baseline
+
 Scope: `/home/hannelora/projects/viber-mcp-linux`; no live Viber interaction, private chat read, GUI input on user desktop or outbound send. All sending success assertions use synthetic fixtures only. MIT remains unchanged; upstream SHA `af1d0ed1b880dc28a18f2d5198a4d09b52047bd4`.
 
 ## Unit/domain and lifecycle

@@ -2,7 +2,9 @@
 
 Linux-порт [wawimundo/viber-mcp](https://github.com/wawimundo/viber-mcp) з усіма **11 назвами інструментів upstream**, реальним AT-SPI backend і захистом від непогодженого надсилання. MIT / авторство Wawi del Mundo збережені. Базовий SHA: `af1d0ed1b880dc28a18f2d5198a4d09b52047bd4`.
 
-**Статус:** domain-тести, справжній MCP stdio і реальний AT-SPI на ізольованому синтетичному GTK-застосунку перевірені. **Працездатність саме на Viber Desktop ще НЕ підтверджена.** Read-only discovery 2026-10-18: немає процесів Viber/XFCE, socket історичного X11 display та accessibility bus відсутні; сесія hannelora `closing`. Тому Qt EditableText і реальні селектори не перевірені; profile не вигаданий. Приватні чати не читалися, GUI input і відправлення не виконувалися. Це не завершена desktop E2E-паритетність. Успадкований `CLAUDE.md` застарілий (його виправлення заблокував захист instruction-файлів); актуальні Linux-статус і команди — тут, у `PARITY.md` та `EVIDENCE.md`.
+**Поточний стан 2026-10-18:** desktop відновлений; живий Viber спочатку мав видиме вікно. Read-only X11 header capture + локальний Tesseract справді прочитали один телефон, але він НЕ дорівнює дозволеному literal `0981901991` (міжнародна форма; відповідність не припускалася). AT-SPI GetAddress повертає відсутній socket — Qt-дерево поки недоступне. Пізніше вікно перестало знаходитися; процес залишився. Після повідомлення Господаря про offline/невдале ручне повідомлення GUI-проби зупинені. HTTPS працює, TCP Viber established, але messaging/session успіх не доведений. Немає жодного нового send, зміни draft чи restart. Додано **read-only OCR calibration**, не готовий OCR/clipboard backend. Повний operational port ще НЕ завершений. Деталі нижче та в останньому розділі EVIDENCE.
+
+**Історичний baseline:** domain-тести, справжній MCP stdio і реальний AT-SPI на ізольованому синтетичному GTK-застосунку перевірені. **Працездатність саме на Viber Desktop ще НЕ підтверджена.** Read-only discovery 2026-10-18: немає процесів Viber/XFCE, socket історичного X11 display та accessibility bus відсутні; сесія hannelora `closing`. Тому Qt EditableText і реальні селектори не перевірені; profile не вигаданий. Приватні чати не читалися, GUI input і відправлення не виконувалися. Це не завершена desktop E2E-паритетність. Успадкований `CLAUDE.md` застарілий (його виправлення заблокував захист instruction-файлів); актуальні Linux-статус і команди — тут, у `PARITY.md` та `EVIDENCE.md`.
 
 ## Запуск без доступу до GUI
 
@@ -57,6 +59,27 @@ Profile містить `application`, `window: {role,name}`, `selectors` із ш
 - Верифікація виконується також усередині worker безпосередньо перед write/send. UI не є атомарною транзакцією щодо дій людини: не користуйтеся Viber паралельно під час дозволеного тесту.
 
 Для цього завдання **ніякий outbound draft не погоджений**. Дозволений майбутній реальний тестовий literal лише `0981901991`. My Notes не є дозволеним тестовим адресатом.
+
+## Launcher і read-only X11/OCR калібрування
+
+`desktop/Viber.desktop.in` відповідає перевіреному desktop launcher. Генератор підставляє абсолютний AppRun поточного користувача, підтримує пробіли, відхиляє небезпечні Desktop Entry metacharacters; **не перезаписує** наявний файл і не запускає програму:
+
+```sh
+/usr/bin/python3 install_launcher.py --output "$HOME/.local/share/applications/Viber.desktop"
+desktop-file-validate "$HOME/.local/share/applications/Viber.desktop"
+```
+
+Не запускати повторно поверх існуючого Desktop/Viber.desktop. Trust/autostart installer не змінює.
+
+`x11_probe.py` — окрема opt-in діагностика, НЕ заміна backend. Потрібні system Python з Pillow, xdotool і Tesseract з eng data. Вона перевіряє єдине видиме Viber-вікно, foreground, власний UID/процес Viber, незмінну геометрію; захоплює тільки configured header rectangle у пам’ять. Не торкається clipboard, не генерує input, не повертає raw OCR/private text. OCR завжди `recipient_verified:false`, `send_authorized:false`, навіть при точному збігу. Overlay/occlusion та помилки OCR не дозволяють використовувати цей результат як доказ identity.
+
+Приватний JSON profile: `{"window_size":[950,780],"header_rect":[294,10,326,73]}` — геометрія спостереженого вікна, **не універсальний profile**. Перед запуском після ручного тесту перевірити актуальну геометрію й дозвіл на header capture; не зберігати profile у Git.
+
+```sh
+VIBER_ALLOW_GUI=1 /usr/bin/python3 x11_probe.py --profile /private/header-profile.json --recipient 0981901991
+```
+
+`VIBER_TESSERACT` може вказувати користувацький binary; потрібні відповідні `LD_LIBRARY_PATH` та `TESSDATA_PREFIX`, якщо пакети лише розпаковані. На цьому host залежності розпаковані без sudo у `~/.local/opt/viber-mcp-ocr`; системні пакети не змінено. CLI capture pipeline ще не пройшов live end-to-end: протестовані фактичний header capture і його OCR окремо, потім вікно зникло та GUI призупинено. Не використовувати діагностику під час ручної роботи Господаря.
 
 ## Відтворення тестів
 
