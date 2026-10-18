@@ -24,10 +24,12 @@ identity-copy timeout3с, restore timeout2с, загалом11,9с. Незале
 залишаються вимкненими. Деталі та межі доказів — у [EVIDENCE.md](EVIDENCE.md).
 
 Нова вимога Господаря: надсилання лише контактам, справді збереженим в адресній
-книзі Viber. Поточний файл псевдонімів цього не доводить. Джерело saved-membership
-і надійний зв'язок contact ID → active chat ще не встановлені; input/send у
+книзі Viber. Поточний файл псевдонімів цього не доводить. Saved membership
+підтверджено для одного рядка All contacts/Viber only; надійний зв'язок із active
+chat ще не встановлено. Input/send у
 production залишаються вимкненими. Copy number не можна вилучити шляхом заміни
-на ім'я, історію чату або локальний allowlist. Див. [оцінку здійсненності](docs/SAVED-CONTACTS.md).
+на ім'я, історію чату або локальний allowlist. Див. [оцінку здійсненності](docs/SAVED-CONTACTS.md) та
+[рекомендацію Linux-native](docs/LINUX-NATIVE-ASSESSMENT.md).
 
 ## Швидкий старт
 

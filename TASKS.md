@@ -92,3 +92,15 @@ read-only schema не підтвердила saved-contact provider/chat binding
 Збережені корисні diagnostic fixes: query timeout не означає missing window;
 GTK init/convert checkpoints;3 isolated Xvfb stall cases пройшли.166 unit tests
 і protocol smoke пройшли; timeout/retry/recipient guards не послаблено.
+
+## Огляд saved contact та Linux-native оцінка
+
+- [x] Підтвердити один exact phone під All contacts із Viber only=true (не Recents).
+- [x] Native search readback; offline OCR існуючого crop:1exact phone,confidence91.5.
+- [x] Оглянути active Info/header/menu/metadata безCopy/Share/Call/send/clipboard.
+- [ ] Довести незалежний contact→active-chat binding; header name недостатній.
+- [x] Порівняти доопрацювання та rewrite: Linux runtime не імпортує Mac API.
+
+Рекомендовано вузький Linux proof у цьомуrepo; docs/LINUX-NATIVE-ASSESSMENT.md.
+Новий adapter, write bypass чи savedcontacts mode не оголошуються готовими.
+Широкі UI-проби припинено після зібраних доказів; нової draft/send згоди немає.

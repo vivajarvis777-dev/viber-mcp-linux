@@ -676,3 +676,46 @@ encryption. There is no verified saved-contactID→active-chat provider in the
 current implementation/evidence. No unsupported adapter or alias allowlist was
 substituted. See docs/SAVED-CONTACTS.md for the bounded next read-only research
 proposal. Removing identity clipboard would still leave clipboard text paste.
+
+## Bounded address-book view discovery and Linux-native assessment
+
+The clarified read-only scope allowed view/search/navigation, not message input,
+Copy number, clipboard operations, contacts/settings mutations or send. Official
+Viber contact documentation identifies Compose→Viber only as the contact-list
+route. On the actual Linux UI, the Compose action returned a GError after applying;
+postview confirmed the picker, so Press was not replayed. Action names include
+Press/SetFocus (and Toggle for the filter), not only lowercase labels.
+
+The focused picker search was verified empty, then the expected test phone was
+entered via AT-SPI keyboard STRING without Return or clipboard. Native readback
+matched exactly. A single exact-phone row was visible BELOW All contacts; the
+Viber only checkbox was visually on and native CHECKED=true. Rows above that
+section were not counted as saved-contact evidence. An offline OCR of the existing
+private crop found All contacts and one exact phone at confidence91.5, with no
+new live capture. The target row was selected through view-only navigation.
+
+Independent active-chat binding remains unproven. Info header and its lower end
+showed name/media/options but no phone.22 scoped native nodes had no expected
+phone in name/description/attributes/accessible ID. QML hierarchy IDs identify
+widgets/classes, not a demonstrated contact key. The context menu only exposed
+Copy name/Copy number without a phone; it was viewed and dismissed, not selected.
+Header-name hover produced no visible tooltip. A relation probe exceeded its9s
+budget, so relation absence is NOT claimed. UI action/scroll timeout was followed
+by postview rather than being treated as proof of non-execution.
+
+Metadata-only checks of allowed existing DBs found no contact/address/chat/
+conversation key/category matches and no matching current/selected/chat/contact
+settings titles. Account values, secrets, chat contents and opaque KV values were
+not read. This does not prove that no further data exist. Search/filter/view state
+changed; no message composer write, Copy/Share/Add/Call/send, clipboard API, access,
+production or Remmina change was performed in this discovery phase.
+
+The user suggested considering a clean Linux-native scenario. Code audit confirms
+Linux server.py loads linux_server, not upstream_server, and all pyobjc dependencies
+are Darwin-only. Existing Linux modules use native GI/AT-SPI/X11/GTK and local OCR.
+The inherited API parity is not the cause of missing live EditableText or absent
+verified chat binding. docs/LINUX-NATIVE-ASSESSMENT.md recommends a narrow vertical
+proof while retaining stdio, guards/ledger, readers and diagnostics; no rewrite or
+unverified saved-contact adapter was added. ASCII search input success is not
+Unicode composer success, and synthetic GTK EditableText is not live Viber proof.
+No new live draft/send is authorized; STRICT-01 remains consumed.
