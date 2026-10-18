@@ -25,7 +25,7 @@ class Delayed(Fake):
                     self.rows.append({'id': 'new', 'text': TEXT, 'outgoing': True})
                     self.value = ''
                 elif self.effect == 'identity':
-                    self.recipient = '0981901992'  # fake only
+                    self.recipient = '2025550199'  # fake only
                 elif self.effect == 'draft':
                     self.value = 'PRIVATE unrelated draft'
         return super().messages()

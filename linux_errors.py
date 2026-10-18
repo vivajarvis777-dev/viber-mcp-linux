@@ -26,6 +26,12 @@ REASONS = {
     'Send verification deadline exceeded': 'verification_timeout',
 }
 CODES = frozenset(REASONS.values()) | {'atspi_unavailable', 'profile_invalid', 'operation_failed'}
+CODES |= frozenset({'x11_required', 'window_missing_or_ambiguous', 'window_not_foreground',
+    'unexpected_window_owner', 'window_geometry_changed', 'ocr_unavailable',
+    'ocr_failed', 'identity_not_visible', 'offline', 'clipboard_unsupported',
+    'clipboard_failed', 'input_disabled', 'draft_unreadable', 'no_stable_message_ids',
+    'self_identity_unavailable', 'ui_command_failed', 'profile_invalid', 'send_button_changed',
+    'navigation_command_failed', 'clipboard_changed'})
 
 
 def reason_code(error):

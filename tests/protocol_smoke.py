@@ -19,18 +19,25 @@ async def smoke(state):
             result=await session.initialize()
             tools=await session.list_tools()
             names={t.name for t in tools.tools}
-            assert names==UPSTREAM|{'health','stop'},names
+            assert names==UPSTREAM|{'health','stop','read_visible'},names
+            by_name={tool.name:tool for tool in tools.tools}
+            assert 'expected_recipient' in by_name['put_draft'].inputSchema['properties']
+            for name in ('health','read_visible','list_chats','list_contacts'):
+                assert by_name[name].annotations.readOnlyHint is True, name
+            for name in ('send_message','reply','put_draft','read_open_chat'):
+                assert by_name[name].annotations.readOnlyHint is False, name
             health=await session.call_tool('health',{})
             assert not health.isError
             contacts=await session.call_tool('list_contacts',{})
             assert not contacts.isError
-            blocked=await session.call_tool('send_message',{'to':'0981901991','text':'SYNTHETIC PROTOCOL TEST — NOT SENT'})
+            blocked=await session.call_tool('send_message',{'to':'2025550123','text':'SYNTHETIC PROTOCOL TEST — NOT SENT'})
             assert blocked.isError
             disabled_calls = {
-                'open_chat':{'to':'0981901991'}, 'open_and_read':{'to':'0981901991'},
-                'reply':{'text':'SYNTHETIC'}, 'search_and_open':{'name':'0981901991'},
+                'open_chat':{'to':'2025550123'}, 'open_and_read':{'to':'2025550123'},
+                'reply':{'text':'SYNTHETIC'}, 'search_and_open':{'name':'2025550123'},
                 'list_chats':{}, 'put_draft':{'text':'SYNTHETIC'},
-                'save_to_my_notes':{'text':'SYNTHETIC'}, 'open_my_notes':{}, 'read_open_chat':{}}
+                'save_to_my_notes':{'text':'SYNTHETIC'}, 'open_my_notes':{}, 'read_open_chat':{},
+                'read_visible':{'region':'conversation'}}
             for name, arguments in disabled_calls.items():
                 response = await session.call_tool(name,arguments)
                 assert response.isError, name
@@ -42,5 +49,5 @@ async def smoke(state):
 
 if __name__=='__main__':
     import tempfile
-    with tempfile.TemporaryDirectory(prefix='viber-mcp-protocol-',dir=os.environ['TMPDIR']) as state:
+    with tempfile.TemporaryDirectory(prefix='viber-mcp-protocol-') as state:
         asyncio.run(smoke(state))

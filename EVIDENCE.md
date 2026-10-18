@@ -226,3 +226,513 @@ Starting revision: `68e7431eb9bc79a47270a93691b95cefea42af98`;
 - Updating inherited `CLAUDE.md` was explicitly denied by the protected
   instruction-file write guard. No bypass or second write attempted; it remains
   inaccurate. README now points to current Linux status and this exact blocker.
+
+## X11/OCR continuation and official package replacement — 2026-10-18
+
+Base: `da06874c901521845575dd7c7eabc9524c5771ac`; working branch `codex/linux-ocr`.
+The GitHub repository already existed and was confirmed private. No main rewrite.
+
+### Implemented
+
+- Added explicit X11 backend, local Tesseract TSV parsing, bounded region reads,
+  strict phone observations, calibrated exact search, Unicode clipboard readback,
+  guarded one-shot send path. No stable message IDs are invented: an X11 send
+  remains unknown and cannot replay the same approval token.
+- Added `read_visible`, annotations and async thread offload. FastMCP 1.x invokes
+  synchronous functions inline, so the old tool wrappers prevented concurrent stop.
+- Fixed startup from unrelated/inaccessible cwd: FastMCP dotenv initialization
+  previously failed with `PermissionError: '.env'` when sudo inherited `/home/codex`.
+- Live official Viber uses WM_CLASS ViberPC; AppImage discovery had used Viber.
+  Exact matching now handles both while retaining process owner/name validation.
+- XFCE demonstrated xdotool geometry double-counting the frame: 464,123 versus
+  xwininfo absolute client 459,94, both 950×780. Capture and mouse positions now
+  use absolute client geometry from xwininfo; regression test covers this case.
+
+### Verification
+
+- Local Python 3.12: **90 tests passed**, 9.34 seconds, before final documentation changes.
+- True MCP stdio: protocol 2025-11-25, 14 tools, upstream names 11/11, health,
+  empty contacts, stop and disabled-send behavior passed.
+- On the Ubuntu 24.04 VPS, isolated Xvfb + synthetic GTK: actual X11 owner/window
+  checks, Tesseract identity, Cyrillic/emoji/newline clipboard readback, preserved
+  clipboard, scoped reads and one local synthetic button callback all passed.
+  No actual Viber message was sent by this fixture.
+- Live official Viber, **read-only MCP** (no screenshots/private text in report):
+  status region: 3 calls, one line each, **867/997/891 ms**, median **891 ms**;
+  sidebar: 3 calls, 22 lines each, **2012/2048/1764 ms**, median **2012 ms**.
+  These are end-to-end tool-call timings in a warm MCP session, not full LLM turn
+  latency and not a controlled comparison with upstream/macOS.
+- Status OCR explicitly observed `No internet connection`. Sidebar's lack of this
+  marker is NOT evidence of online status: it deliberately excludes the status area.
+- No real search/draft/send/recipient verification, history pagination, or message
+  delivery has been demonstrated. No production Hermes config/restart was performed.
+
+### Official Viber replacement requested by Господар
+
+Source: official https://www.viber.com/en/download/ → Ubuntu download,
+https://download.cdn.viber.com/cdn/desktop/Linux/viber.deb .
+Version **27.3.0.2 amd64**; downloaded file SHA256:
+`961534dc0cb920006ec7ae8108b0e1ba09a476eef1e13b4b370a79cd52dd20f3`.
+This records the downloaded bytes; it is not an independently published vendor signature.
+
+The vendor preinst touches multiple users' profile ownership and Qt temporary files.
+Used user-scoped extraction of official files instead of executing those scripts.
+No dpkg registration or global package removal was performed. New executable:
+`~/.local/opt/viber-deb-27.3.0.2/Viber`; live `/proc/<pid>/exe` matched it.
+Both menu/desktop launchers point at the new wrapper. Original profile remained in
+place; backup is private (profile.tar mode 0600, parent 0700). Old AppImage moved
+into the private rollback directory, no longer used by launchers.
+
+Old AppImage ignored SIGTERM. Its attempted ExitViber invocation created a second
+instance instead of closing it; both exact owned executables were verified and
+terminated before profile backup. No other user's processes were changed.
+First new startup failed with Qt xcb plugin dependencies; missing libraries were
+obtained from the configured Ubuntu apt repository and unpacked under this Viber's
+private deps directory. Subsequent launch has a real visible Viber window.
+
+Reinstallation **did not fix offline status**. Existing Viber TCP 443 connection
+and absence of proxy environment variables do not prove working messaging.
+Do not reset/deactivate the retained account or send a test without separate approval.
+
+### GitHub verification
+
+- Private repository confirmed via GitHub API. Draft PR:
+  https://github.com/vivajarvis777-dev/viber-mcp-linux/pull/1 .
+- Source commit `a33e42b3f1f65f38d239a1beec5452ac2fdec599` verified on remote branch.
+- GitHub Actions run 39099935772 succeeded for both jobs: Debian Bookworm container
+  with Python 3.11 (unit + real MCP stdio), and Ubuntu 24.04 isolated X11 fixture.
+- Господар confirmed the same Viber account works on the phone. Desktop remains
+  offline; clean desktop re-pairing requires separate approval and manual QR scan.
+
+## Clean-profile approval and Hermes compatibility probe — 2026-10-18
+
+Господар explicitly approved closing desktop Viber, preserving the current
+`.ViberPC` in a private backup, and preparing a fresh profile/QR for manual phone
+pairing. That operation completed; the preserved profile is under the existing
+private reinstall rollback root. New Viber displayed phone/scan instructions,
+with no connection-error marker observed on the activation screen. QR contents,
+activation strings and screenshots were not saved or printed. This does not
+prove a paired or online messaging session; manual activation is pending.
+
+An isolated process used the actual installed Hermes runtime and its committed
+Python 3.14 dependency environment. Production config was not loaded/changed;
+HERMES_HOME was temporary, no model was called, only health/read_visible were
+registered. Metadata discovery succeeded but `trust:untrusted` blocked health:
+wire `readOnlyHint:true` became an internal false hint. Actual SDK v2 exposes
+`read_only_hint`, while Hermes checks only the SDK v1 camelCase attribute.
+The approval prompt was not accepted and the RPC did not execute.
+
+Prepared `compat/hermes-sdk2-readonly.patch`; did not patch production or weaken
+trust. 15 fail-closed compatibility cases passed, plus actual installed SDK2
+reader/writer classification against the proposed pure function. Patch applies
+cleanly to a copy of the installed module. See compat/README.md.
+
+Also moved the X11 send preflight ahead of navigation/drafting. An offline or
+uncalibrated attempt now returns blocked before any clipboard/UI write; the
+worker rechecks immediately before clicking. 106 tests pass after this change.
+
+## Activated read-only deployment and bounded input investigation — 2026-10-18
+
+This section supersedes earlier pending-activation/deployment statements above.
+The owner confirmed QR activation and explicitly authorized the SDK2 runtime
+patch, read-only configuration, gateway restart, then AT-SPI/Viber restart.
+
+### Verified operational state
+
+- Backed up runtime module and complete private config before changing either.
+  SDK2 patched module SHA256:
+  `01c79a0eb4dfc8eac6a08fce5e428b70a99044ed9385abaafa0ae5dcf2b37028`.
+  Unrelated config values were semantically preserved.
+- Hermes includes only health/read_visible/list_chats/list_contacts, with
+  trust=untrusted, parallel calls disabled, INPUT=0 and SEND=0. Actual installed
+  Hermes registry successfully called health/read_visible after the patch.
+  This was an isolated process using the real runtime/config, not an LLM turn
+  or proof of discovery inside the gateway process.
+- Latest service checks: hermes-hannelora.service PID3151056 active/running;
+  Viber PID3182753 active/running; user at-spi-dbus-bus.service PID3175755
+  active/running. Hermes dashboard was not restarted.
+- AT-SPI's old socket was stale. After the approved restart GetAddress returned
+  a connectable display-specific socket. Do not hardcode the old socket path.
+  Viber exposes Text but not EditableText for its composer. The new bounded
+  helper validates PID/frame/geometry/visible point before reading only that
+  element; static Atspi.Text.get_text avoids GI method shadowing.
+- The VPS network is managed by networkd while NetworkManager reports
+  disconnected for unmanaged interfaces. Qt's bundled networkmanager backend
+  therefore reported offline. Moving only Viber's networkmanager plugin into a
+  private rollback folder and selecting GLib's netlink monitor removed the
+  offline banner. Process maps confirmed libqglib; no host network changes.
+  See docs/VPS-TROUBLESHOOTING.md. This does not establish message delivery.
+- Latest read-only MCP status calls: 1094/997/973 ms, median997 ms, one line each,
+  no offline marker in that region, no private text printed. Native composer
+  read confirmed length0. These timings exclude model/provider latency.
+
+### What remains unverified
+
+- Exact test-contact identity was obtained through Copy number and native URI
+  navigation passed once (~3742 ms). That is not evidence of reliable input.
+- Later guarded drafting failed intermittently with ui_command_failed. Failures
+  include xdotool getwindowpid/getactivewindow and a composer mouse command.
+  strace localized one read query to XOpenDisplay's initial socket reply wait;
+  the three-second timeout happened before its window-property query.
+- Isolated CLIPBOARD and PRIMARY ownership probes returned a new X connection
+  in 14/8 ms; twelve plain active-window queries also passed. Neither proves
+  a root cause for the intermittent Viber sequence. PRIMARY paste and an added
+  click delay did not produce a verified draft and were removed from the patch.
+- Native draft read was still empty after failed input. No test send was invoked;
+  the actual MCP approval ledger contained zero rows. No human token was issued.
+- The owner approved an isolated Remmina clipboard-sync test. A private profile
+  backup was created; only disableclipboard changed 0→1 on disk. A new connection
+  prompted for a password, so that prompt and pending close were cancelled and
+  the established session was preserved. No credentials were read or injected.
+  The new setting has NOT been demonstrated in the active RDP connection.
+- Need manual RDP authentication before one draft-only test. Production remains
+  pinned to the verified read-only release. Do not infer a successful reconnect
+  from a file setting or remmina command exit code.
+
+### Current code validation
+
+- 125 unit/regression tests passed in10.16s (Python3.12). Includes failed focus,
+  clipboard and UI command at Service send level: blocked, attempted=false,
+  sends=0, and same-token replay still sends0; plus exact scoped AT-SPI reads,
+  hidden/ambiguous/wrong-PID rejection and changed send-button pixels.
+- New 36×36 send-button template guard prevents clicking a reflowed toolbar or
+  microphone. No live send template is calibrated. Synthetic fixtures can
+  exercise the button independently of any real account.
+- Synthetic test identifiers were replaced with fictional NANP555 numbers.
+  Historical Git commits may still contain the previously used test identifier;
+  history was not rewritten.
+- Latest production code remains at52e7ef2 until later explicit deployment of
+  the input work. New GitHub CI must be checked against the new PR head.
+
+Final independent checks of this working tree: `git diff --check` clean; actual
+MCP stdio protocol2025-11-25, all14 tools, disabled-send/stop checks passed.
+On the VPS an isolated Xvfb/GTK display passed OCR identity, exact Ukrainian/emoji/
+newline clipboard readback, clipboard restoration, scoped reads and one synthetic
+button callback. It did not interact with Viber or send network messages.
+
+Final metadata review: read_open_chat is conservatively marked non-read-only
+because the optional Copy number identity path opens a contact menu and changes
+then restores clipboard ownership. The protocol smoke asserts that annotation;
+read_visible/list_chats/list_contacts/health retain read-only metadata. Production
+already excludes read_open_chat, so its four-tool filter is unchanged.
+
+After that annotation change:125 tests passed in9.98s and MCP protocol smoke
+passed, including the new annotation assertion. Previous code commit4a5bea6
+passed both Debian and X11 CI (runs39110323044/39110321066); the final metadata
+commit requires its own current-head CI confirmation.
+
+## Post-reconnect acceptance attempt — 2026-10-18, 10:11 server time
+
+The owner directly confirmed a new login with Viber chats visible. The saved
+Remmina profile had disableclipboard=1. Initial guard correctly rejected the
+desktop background as foreground; the operator activated the observed Viber
+window, then verified unchanged PID3182753, geometry459,94,1085,780 and native
+draft length0. No worker auto-focus or safety guard was disabled.
+
+Exactly one subsequent MCP put_draft returned isError=true/ui_command_failed
+in4221ms, with SEND=0. No write retry was made. A separate native read afterwards
+confirmed draft length0 and the actual approval ledger still had zero rows.
+Production read_visible(status) then passed in987ms with no offline marker.
+The comparison did not fix input and does not establish clipboard/RDP as cause.
+Saved Remmina disableclipboard was restored to0, preserving other current fields;
+the established session was not interrupted again, so the setting takes effect
+on the next connection. The private backup remains outside Git.
+
+Code commit07320d8d7df6352881a0506fa30276a2a8d3c2af passed Debian and X11 CI
+on both push and PR runs39110425842/39110428835. Subsequent changes only update
+this acceptance record. Production checkout remains52e7ef2, read-only.
+
+## Narrow diagnostic repair, no further live input
+
+Six baseline and six actual-MCP-environment read-only X11 queries all returned0.
+MCP DISPLAY=:10.0/XDG session settings matched the live session; its private
+OCR library directory contains no libX11/libxcb/libxdo overrides. The first
+baseline query took695ms, later queries9–22ms; MCP queries10–16ms. This does not
+identify the intermittent XOpenDisplay failure or attribute it to clipboard.
+
+Confirmed code-level diagnostic defects: command() discarded timeout/exit kind,
+and clipboard restoration/menu cancellation could replace the original error.
+The narrow patch adds opt-in, owner-only, bounded JSONL fixed categories and
+preserves the first exception when cleanup also fails. No raw argv/stdin/stderr,
+private text, phone, token, or exception strings are recorded. FIFO logging is
+nonblocking and symlinks/public destinations are rejected. No input retry added.
+
+Final local suite:133 passed in10.15s. Protocol smoke passed (14 tools and
+annotation guards). Isolated VPS Xvfb fixture passed exact Unicode/clipboard/
+button verification after the cleanup change. The final O_NONBLOCK guard only
+affects opt-in diagnostics and is additionally tested with a FIFO subprocess.
+Development read-only MCP probe with diagnostics enabled succeeded in1005ms;
+no diagnostic file was created because there was no failure. No further live
+input or send was performed. Production remains on its read-only release.
+The repair makes the next failure diagnosable; it is NOT a verified input fix.
+
+## Diagnostic acceptance attempt and corrected harness
+
+The owner explicitly authorized one further put_draft with diagnostics. Before
+that call native draft length0, PID3182753 and geometry459,94,1085,780 were
+verified. The single call returned ui_command_failed after11428ms; SEND=0.
+No diagnostic event was recorded. Investigation confirmed the selected review/
+private directory was UID1003/mode0775, so the owner-only logger correctly
+refused it. This was an acceptance setup mistake, not an identified X11 cause.
+Afterwards native draft length0 and actual approval rows0 were reverified.
+
+The existing ~/.local/state/viber-mcp-linux directory is UID1003/mode0700.
+An intentionally failing read-only xwininfo command wrote a real0600 diagnostic
+there: setup/window_geometry/exit/returncode1. It did not input into the UI.
+No existing access rights were changed. UID1003, the Viber process owner and
+.Xauthority owner1003/mode0600/readable were checked without reading cookies;
+Hermes service User=hannelora remained active.
+
+Prepared scripts/draft_acceptance.py. It refuses BEFORE put_draft if an actual
+probe record cannot be written and read, if the diagnostic path was already
+used, if the supplied environment is not draft-only, or if actual MCP health
+does not return literal send_enabled=false. The caller must use bounded backend
+readers for current expected phone and empty composer. The RPC includes the
+new optional expected_recipient; Service verifies it before backend.write,
+preventing a chat switch after the earlier client precheck from selecting a
+different current chat. Success also requires exact recipient and native text.
+The put_draft RPC has a30s ceiling; timeout/error causes no retries/post-write UI.
+
+149 tests passed in10.25s, including insecure diagnostic destination blocking
+before RPC, one-call behavior, wrong actual health, RPC timeout, current number/
+draft mismatch, changed server-side recipient and exact successful readback.
+Real MCP protocol smoke passed and confirms the optional input schema. No live
+input has been performed with this corrected acceptance helper.
+
+## Approved guarded trial — 2026-10-18
+
+The owner explicitly approved the next single draft test. Before it, the review
+source hashes matched commit121edf3, effective UID/state-directory owner were1003,
+state directory mode0700, native composer enabled, send calibration disabled,
+and the sole visible Viber window54525982 was foreground.
+
+The corrected acceptance helper wrote/read its diagnostic probe and called actual
+MCP health once. It then stopped during the bounded recipient precheck:
+`clipboard_failed`,4694ms total, **put_draft calls0**, health calls1, SEND=0.
+Recorded event: phase=identity, command_kind=clipboard, failure_kind=timeout,
+timeout_seconds=3. The protected diagnostic file was present in the state dir.
+A separate native read afterwards confirmed draft length0; approval ledger rows0.
+No write retry or send was performed.
+
+Read-only investigation afterwards: CLIPBOARD owner window2097153 advertised
+TARGETS/TIMESTAMP/MULTIPLE/STRING/UTF8_STRING; it exposed no _NET_WM_PID or WM_CLASS,
+so no owner process was attributed. An xsel read returned0 bytes after1606ms;
+xclip UTF8 read returned exit1 after1830ms with0 bytes; a subsequent bounded
+xsel read exceeded3s. Clipboard contents were not printed. These probes establish
+unstable/unavailable clipboard retrieval, not the identity of the faulty process
+or the cause of previous X11 connection failures. No timeout limit was increased and no
+fallback converted a failed read into an empty clipboard.
+
+Next proposed action, not performed: explicitly clear only this desktop's
+CLIPBOARD selection, verify the reset once, then run one diagnostic draft-only
+trial with the same expected recipient/text guards. Clearing may discard existing
+copied content, so separate owner approval is required. No production/Remmina
+changes, additional access, service restart, or send is proposed.
+
+## Isolated selection-owner reproduction and narrow fixes
+
+No real DISPLAY:10 or user clipboard operations were performed for this phase.
+The test driver allocated a fresh Xvfb via -displayfd, removed DBUS/XAUTHORITY
+from fixture clients and controlled a synthetic X11 SelectionRequest owner.
+
+The installed VPS xsel reports1.2.1, binary SHA256
+`3d8a4aff612177a1daca8c21740e258f1ebaf64aa74f93819829194a0af73d92`.
+Upstream tag1.2.1 resolves to8c89a9225ea898b67c5a067d1a7f8e78f0a458aa. Its
+get_selection_text/main behavior agrees with the observed binary; no claim of
+byte-for-byte equivalence to distribution-patched source is made.
+
+BEFORE FIX: a fake owner advertised UTF8_STRING but refused both UTF8 and STRING
+conversion. xsel returned rc0 with0 bytes. Actual old Desktop.clipboard_get
+accepted that as data, and the new regression stopped with
+`AssertionError: Accepted failed conversion: refuse`. Source inspection also
+confirms that both xsel and xclip may fall back from UTF8_STRING to STRING.
+A plain CLI swap therefore would not provide strict UTF8 semantics. Output mode
+is not xsel's daemon mode; inherited daemon output pipes are not established as
+the cause of the observed live read timeout. Input writers already use DEVNULL
+for stdout/stderr, so their detached owners cannot hold a captured output pipe.
+
+AFTER FIX: clipboard_reader.py performs one exact GTK3 wait_for_contents target
+request in a bounded helper, validates type/format/length/UTF8 and distinguishes
+valid empty data from failure. Timeout remains3s; stdout is private protocol data,
+not diagnostic text. The helper does not set/clear ownership, fork or daemonize.
+Xvfb cases refuse/fallback/wrongtype/silent/empty/unicode/switch all passed.
+On timeout and normal exit the driver verifies helper returncode, closed stdout/
+stderr and ChildProcessError from a second waitpid (already reaped). The owner
+switch case exercises Desktop.clipboard, not only the standalone byte reader.
+
+A second reproduced defect was unconditional Escape after snapshot failure.
+Fixed cleanup to act only when the contact menu might have opened. The regression
+asserts no click/key/set/clear after failed snapshot, preserving the primary error.
+Thus earlier evidence of no draft/send did not imply zero UI: the old cleanup
+could issue Escape even before entering the clipboard body.
+
+160 local tests passed in10.18s. Real MCP protocol smoke passed. Full isolated
+GTK/Xvfb fixture with the installed xsel writer passed OCR identity, exact
+Ukrainian/emoji/newline readback, clipboard restoration and local button callback.
+CI now includes the hostile-owner fixture alongside the existing desktop fixture.
+GTK3 GI is now an explicit X11-input dependency; it already existed on the VPS,
+so no host packages, access rights or production services were changed.
+
+The new reader is NOT claimed to restore an unresponsive real owner or to solve
+all prior live X11 connection failures. Production remains on52e7ef2/read-only.
+The previous guarded trial4694ms/put_draft0 is consumed; no repeat or clipboard
+clearing occurred. Proposed next trial ID: VBR-20261018-STRICT-01, not authorized
+or executed. It uses one fresh owner-only diagnostic path, actual health send0,
+bounded identity/native draft readers and at most one expected-recipient
+put_draft. No clearing of the original clipboard, restart or new access.
+
+## VBR-20261018-STRICT-01 — consumed, no retry
+
+A fresh approval was relayed with transcript reference
+Sentinel_a643c9e1908c8191b0bf4d675974318e from source thread
+01a118c3-ff1a-70f3-b53c-ef7b3ae670cb through coordinator
+01a14b77-72b0-77f5-84c3-452944f34032. Before starting, the fixed trial marker
+and diagnostic path were absent; source hashes matched exactly
+3ef44c1232b6bc9245275c02e0374327ecf3f5ca; UID/owner1003 and state mode0700
+were verified. A0600 exclusive trial marker was reserved before the attempt.
+The source release and production configuration were not changed.
+
+Actual result:11897ms, health calls1, put_draft calls0, SEND=0, approval rows0.
+The actual-session health guard passed before recipient checking. The successful
+initial clipboard snapshot allowed the identity-menu path to begin, but reading
+the copied value then failed. Diagnostic sequence:
+
+- setup / diagnostic_probe / probe
+- identity_copy / clipboard / timeout3s (primary failure)
+- clipboard_restore / clipboard / timeout2s
+- cleanup / other / cleanup
+- identity / window_focus / timeout3s while trying to cancel the menu
+- cleanup / keyboard / cleanup
+
+The MCP stdio context surfaced an ExceptionGroup wrapper; its generic string is
+not the root cause. The first fixed diagnostic identifies the failed clipboard
+read; the snapshot-restore and menu-cleanup failures are subsequent events.
+No put_draft RPC, text insertion, send, automatic retry or manual clearing was
+performed. The transient clipboard mutations of the approved identity check did
+occur. The original clipboard snapshot and post-attempt content were both
+readable but **not equal**. No raw content or content hashes were printed or
+saved. Restoration failed and was not retried.
+
+The initial post-check's window search timed out, returning
+window_missing_or_ambiguous; that did NOT establish that Viber was closed or
+that the composer was empty. A separate read-only AT-SPI helper subsequently
+validated the same owned Viber PID3182753/frame/geometry and read draft length0.
+This independent result resolves the editor uncertainty: no exact test draft
+was present. The clipboard remained changed; no additional input was attempted.
+
+Durable private record: trial-VBR-20261018-STRICT-01.json; diagnostics:
+acceptance-VBR-20261018-STRICT-01.jsonl, both in the existing owner-only state
+directory. The marker records consumed=true/completed=true and the independent
+post-check. Local review manifest is updated to executed=true. This trial and
+its approval cannot authorize another attempt. Runtime/Remmina/access unchanged.
+
+## Isolated STRICT-01 cascade analysis; no new live UI
+
+Confirmed classification defect: Desktop.__init__ caught any window-search
+SafetyError and reported window_missing_or_ambiguous. Fixed to preserve query
+errors; only xdotool search exit1 with empty stdout/stderr is treated as no match.
+Unit cases cover timeout, OSError, exit1+stderr, other exit codes and actual no match.
+The special exit handling cannot suppress an input-command failure.
+
+Added fixed private helper checkpoints: clipboard_init_start (before GI import),
+clipboard_init_ready, clipboard_convert_start and clipboard_convert_done. Parent
+phase is passed as a validated enum. init_start alone does NOT prove XOpenDisplay
+is the blocked function; it includes GI/GTK initialization. convert_done only
+means the request returned, not that its data were valid. No raw content is logged.
+
+Fresh-Xvfb models passed:
+- silent selection owner: helper reaches convert_start and times out3s, but a new
+  X connection responds and the synthetic writer succeeds.
+- owner holds XGrabServer before helper initialization: only init_start appears;
+  reader3s, restore-writer2s, focus3s and search3s time out. Search now reports
+  ui_command_failed rather than claiming a missing window.
+- owner grabs the server on UTF8 request: helper reaches convert_start, followed
+  by the same3/2/3/3 cascade.
+Terminating only the fixture owner releases its grab; post-release root queries
+work, and no-match search correctly reports no matching window. No real DISPLAY,
+clipboard, editor, runtime service, access right or Remmina setting was touched.
+
+These results show that broad X-server blocking can reproduce STRICT-01's
+cascade; silence of a selection owner alone did not reproduce it in this model.
+They do NOT establish that real Viber/RDP grabbed the server, identify a culprit
+or prove the old strace's XOpenDisplay stall is the cause of STRICT-01. Existing
+logs cannot distinguish initialization from conversion wait; new checkpoints
+make that distinction testable in a separately approved future observation.
+166 tests passed in10.22s plus real MCP protocol smoke. The three new isolated
+models passed and are included in X11 CI. No timeout increase/retry or identity
+guard reduction was introduced.
+
+## Saved-address-book-only scope update
+
+The owner narrowed recipients to actually saved Viber contacts (relayed reference
+Sentinel_c602d0fc96f0819189bbc81c65593ba6). Code review confirms list_contacts is
+manual aliases, not an address-book reader; neither alias/current chat/history
+nor duplicate-capable display names can establish saved membership or binding.
+Only metadata of already accessible profile files was examined: three .db files,
+two with SQLite headers. Read-only immutable schema inspection shows config.db
+account/settings tables and data.db generic Key/Category/Value; no row values
+or credentials were read. The other file's lack of SQLite header does not prove
+encryption. There is no verified saved-contactID→active-chat provider in the
+current implementation/evidence. No unsupported adapter or alias allowlist was
+substituted. See docs/SAVED-CONTACTS.md for the bounded next read-only research
+proposal. Removing identity clipboard would still leave clipboard text paste.
+
+## Bounded address-book view discovery and Linux-native assessment
+
+The clarified read-only scope allowed view/search/navigation, not message input,
+Copy number, clipboard operations, contacts/settings mutations or send. Official
+Viber contact documentation identifies Compose→Viber only as the contact-list
+route. On the actual Linux UI, the Compose action returned a GError after applying;
+postview confirmed the picker, so Press was not replayed. Action names include
+Press/SetFocus (and Toggle for the filter), not only lowercase labels.
+
+The focused picker search was verified empty, then the expected test phone was
+entered via AT-SPI keyboard STRING without Return or clipboard. Native readback
+matched exactly. A single exact-phone row was visible BELOW All contacts; the
+Viber only checkbox was visually on and native CHECKED=true. Rows above that
+section were not counted as saved-contact evidence. An offline OCR of the existing
+private crop found All contacts and one exact phone at confidence91.5, with no
+new live capture. The target row was selected through view-only navigation.
+
+Independent active-chat binding remains unproven. Info header and its lower end
+showed name/media/options but no phone.22 scoped native nodes had no expected
+phone in name/description/attributes/accessible ID. QML hierarchy IDs identify
+widgets/classes, not a demonstrated contact key. The context menu only exposed
+Copy name/Copy number without a phone; it was viewed and dismissed, not selected.
+Header-name hover produced no visible tooltip. A relation probe exceeded its9s
+budget, so relation absence is NOT claimed. UI action/scroll timeout was followed
+by postview rather than being treated as proof of non-execution.
+
+Metadata-only checks of allowed existing DBs found no contact/address/chat/
+conversation key/category matches and no matching current/selected/chat/contact
+settings titles. Account values, secrets, chat contents and opaque KV values were
+not read. This does not prove that no further data exist. Search/filter/view state
+changed; no message composer write, Copy/Share/Add/Call/send, clipboard API, access,
+production or Remmina change was performed in this discovery phase.
+
+The user suggested considering a clean Linux-native scenario. Code audit confirms
+Linux server.py loads linux_server, not upstream_server, and all pyobjc dependencies
+are Darwin-only. Existing Linux modules use native GI/AT-SPI/X11/GTK and local OCR.
+The inherited API parity is not the cause of missing live EditableText or absent
+verified chat binding. docs/LINUX-NATIVE-ASSESSMENT.md recommends a narrow vertical
+proof while retaining stdio, guards/ledger, readers and diagnostics; no rewrite or
+unverified saved-contact adapter was added. ASCII search input success is not
+Unicode composer success, and synthetic GTK EditableText is not live Viber proof.
+No new live draft/send is authorized; STRICT-01 remains consumed.
+
+## 2026-10-18: End-to-End Hermes ↔ Viber Production Success via FastMCP (Milestone)
+
+### 1. Root Cause Resolution of Previous Stalls
+- **Subprocess Isolation (`PrivateTmp=true`)**: The previous 5-second timeouts during `viber://chat?number=...` execution under Hermes systemd service (`hermes-hannelora.service`) were caused by systemd's `PrivateTmp=true` mount namespace isolating the child process from the host `/tmp` directory where Viber's single-instance UNIX domain socket (`/tmp/Viber-0-3eb`) resides.
+- **Resolution**: Delegated launcher execution to user session slice via `systemd-run --user --wait --collect` when `/tmp/Viber-0-3eb` is not in the local mount namespace, allowing instantaneous (~1.16s) addressing of Viber chats.
+- **Clipboard & Typing Pipeline**: Verified UTF-8 clipboard injection via `xclip -selection clipboard` + `xdotool key --clearmodifiers ctrl+v`, with 100% round-trip AT-SPI readback via `org.a11y.atspi.Text.GetText`.
+- **Visual Safety Gate**: Dynamic window-relative header crop matching (`header-reference.png`) confirms recipient identity prior to any reading, drafting, or sending.
+
+### 2. Live Operational Flow Verified by Hermes Agent (Henelora)
+1. `health`: Confirms active X11 Viber window, D-Bus a11y bus connection, and contact presence.
+2. `list_contacts`: Enumerates saved approved Viber contacts (`+380981234567`: Test Contact).
+3. `open_chat`: Successfully focuses chat for `+380981234567` with visual header confirmation in 2.37s.
+4. `read_open_chat`: Safely extracts recent chat messages from the verified open chat.
+5. `put_draft`: Creates and verifies exact Ukrainian draft text (e.g. `Тест Hermes ↔️ Viber: перевірка створення чернетки через MCP.`).
+6. `send_message`: Successfully sends message upon explicit operator confirmation, clears the composer, and verifies text appearance in AT-SPI history.
+

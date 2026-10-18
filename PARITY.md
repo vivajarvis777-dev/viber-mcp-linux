@@ -1,3 +1,26 @@
+# Актуальний стан v0.3, 2026-10-18
+
+14 інструментів: 11 назв upstream плюс `health`, `stop`, `read_visible`.
+X11/OCR backend тепер реалізований; старі твердження «OCR відсутній» нижче —
+історичний стан до цієї зміни. Порт не став повністю operational для всіх чатів.
+
+| Можливість | AT-SPI | X11/OCR | Живий Viber |
+|---|---|---|---|
+| Scoped читання | Реалізовано | Реалізовано | Статус перевірено через MCP |
+| Точна ідентичність | Accessible phone | Точна OCR phone-line ≥85 confidence | Не відкалібровано для write |
+| Unicode draft | EditableText | Plaintext clipboard + exact readback | Тільки синтетичний GUI тест |
+| Пошук | Unique exact accessible result | Unique exact OCR result | Не перевірено наживо |
+| Погоджений send | Stable outgoing ID → sent | Один клік → unknown, stable ID немає | Не виконувався |
+| My Notes | Потрібен незалежний self-marker | Блокується | Не перевірено |
+| stop | Worker kill | SIGTERM + час на clipboard cleanup | Протокол/синтетика |
+
+Немає гарантії доставки; відсутність OCR offline-маркера не доводить online.
+Input/send у поточному VPS profile вимкнені. Правила approval/replay збережені.
+
+---
+
+## Історичний baseline
+
 # Повна матриця інструментів upstream
 
 Джерело: `wawimundo/viber-mcp`, commit `af1d0ed1b880dc28a18f2d5198a4d09b52047bd4`, `server.py` (копія `upstream_server.py`). MCP names: **11/11**; додані `health`, `stop`. Це паритет поверхні API та реалізованих шляхів, **не доказ повного operational parity на живому Viber**.
@@ -21,7 +44,7 @@
 1. **Unit/domain fixture:** усі 11 шляхів, включно з notes/send, працюють проти явно синтетичного backend; це не Viber.
 2. **Справжній MCP stdio:** initialize, tools/list, усі 11 tools/call у безпечному disabled режимі; health/list_contacts/stop success; desktop/send paths fail closed.
 3. **Справжній AT-SPI + GTK:** ізольовані Xvfb/D-Bus, реальний accessibility IPC, text read/write, exact search, local button action, scoped reads. Синтетична кнопка не відправляє повідомлення.
-4. **Viber Desktop E2E:** **НЕ перевірено для всіх GUI-шляхів**. Дозволене read-only discovery 2026-10-18 знайшло конкретний blocker: немає Viber/XFCE процесів, X11 socket і accessibility bus socket; історична сесія hannelora `closing`. Дерево реального Viber недоступне. Не читали приватні чати, не вводили GUI, не відкривали інші чати. Немає погодженого тексту для реального `0981901991`.
+4. **Viber Desktop E2E:** **НЕ перевірено для всіх GUI-шляхів**. Дозволене read-only discovery 2026-10-18 знайшло конкретний blocker: немає Viber/XFCE процесів, X11 socket і accessibility bus socket; історична сесія hannelora `closing`. Дерево реального Viber недоступне. Не читали приватні чати, не вводили GUI, не відкривали інші чати. Немає погодженого тексту для реального `2025550123`.
 
 ## Межі, які не можна приховувати
 
@@ -36,4 +59,4 @@
 
 Оновлення 2026-10-18: desktop уже відновлений; цю стару вимогу виконано. Нові blockers: stale AT-SPI socket, відмінна міжнародна форма номера у header, повідомлена Господарем offline-проблема. GUI-проби призупинені на час ручного тесту. Реальний X11 header capture та локальний OCR перевірені; `x11_probe.py` лише діагностика без authorization/write/send і без інтеграції у domain backend. Clipboard fallback та повний operational parity залишаються відкритими.
 
-Історичний наступний крок — Господар відновлює власну desktop-сесію/Viber або окремо погоджує конкретне відновлення. Потім повторити вузьке read-only discovery без читання приватного тексту та відкалібрувати profile за реальними доказами. Лише literal `0981901991`; надсилання тільки після погодження точного тексту. Не тестувати My Notes наживо. OCR/clipboard fallback не додавали без доступного реального UI: історична нотатка про clipboard не доводить безпечної інтеграції чи готовності поточного backend.
+Історичний наступний крок — Господар відновлює власну desktop-сесію/Viber або окремо погоджує конкретне відновлення. Потім повторити вузьке read-only discovery без читання приватного тексту та відкалібрувати profile за реальними доказами. Лише literal `2025550123`; надсилання тільки після погодження точного тексту. Не тестувати My Notes наживо. OCR/clipboard fallback не додавали без доступного реального UI: історична нотатка про clipboard не доводить безпечної інтеграції чи готовності поточного backend.

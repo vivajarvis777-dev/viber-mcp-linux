@@ -1,0 +1,28 @@
+--- a/tools/mcp_tool_registration.py
++++ b/tools/mcp_tool_registration.py
+@@ -45,11 +45,20 @@
+     return _core._TRUST_UNTRUSTED
+ 
+ 
+-def _annotation_read_only_hint(mcp_tool: Any) -> bool:
+-    """True only when annotations (SDK object or cache dict) carry ``readOnlyHint is True``; unknown = write-capable."""
+-    annotations = getattr(mcp_tool, "annotations", None)
+-    hint = annotations.get("readOnlyHint") if isinstance(annotations, dict) else getattr(annotations, "readOnlyHint", None)
+-    return hint is True
++def _annotation_read_only_hint(mcp_tool: object) -> bool:
++    """Require an explicit boolean True; conflicting aliases remain write-capable."""
++    annotations = getattr(mcp_tool, 'annotations', None)
++    values = []
++    for key in ('readOnlyHint', 'read_only_hint'):
++        if isinstance(annotations, dict):
++            if key in annotations:
++                values.append(annotations[key])
++        else:
++            missing = object()
++            value = getattr(annotations, key, missing)
++            if value is not missing:
++                values.append(value)
++    return bool(values) and all(value is True for value in values)
+ 
+ 
+ def _record_tool_trust_metadata(server_name: str, config: dict, tools: List[Any], key=None) -> None:

@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import socket
 import subprocess
+from x11_worker import window_geometry
 
 
 class ProbeError(RuntimeError):
@@ -73,7 +74,7 @@ def rectangle(profile, width, height):
 def snapshot(profile):
     if os.getenv('VIBER_ALLOW_GUI') != '1':
         raise ProbeError('gui_disabled')
-    ids = command(['xdotool', 'search', '--onlyvisible', '--class', '^Viber$']).decode().split()
+    ids = command(['xdotool', 'search', '--onlyvisible', '--class', '^(Viber|ViberPC)$']).decode().split()
     if len(ids) != 1 or not ids[0].isdigit():
         raise ProbeError('window_missing_or_ambiguous')
     wid = ids[0]
@@ -87,9 +88,7 @@ def snapshot(profile):
         proc = Path('/proc') / pid
         if proc.stat().st_uid != os.getuid() or (proc / 'comm').read_text().strip() != 'Viber':
             raise ProbeError('unexpected_window_owner')
-        geometry = command(['xdotool', 'getwindowgeometry', '--shell', wid]).decode()
-        values = dict(line.split('=', 1) for line in geometry.splitlines() if '=' in line)
-        return tuple(int(values[k]) for k in ('X', 'Y', 'WIDTH', 'HEIGHT'))
+        return window_geometry(wid)
     before = state()
     x, y, width, height = before
     dx, dy, w, h = rectangle(profile, width, height)

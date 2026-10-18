@@ -34,3 +34,7 @@ htmlcov/
 .pytest_cache/
 ui-profile.json
 state/
+private/
+.agents/
+.ruff_cache/
+config.json

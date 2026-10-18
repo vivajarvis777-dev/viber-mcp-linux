@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from linux_backend import LinuxBackend, SafetyError
+from linux_backend import configured_backend, SafetyError
 from linux_errors import reason_code
 
 
@@ -75,7 +75,7 @@ class Service:
         self.verification_timeout = verification_timeout
         self.poll_interval = poll_interval
         self.cancelled = threading.Event()
-        self.backend = backend or LinuxBackend()
+        self.backend = backend or configured_backend()
         self.root = Path(state or os.getenv('VIBER_STATE_DIR', str(Path.home()/'.local/state/viber-mcp-linux')))
         self.contacts_path = contacts or os.getenv('VIBER_CONTACTS_FILE')
         self.send_enabled = os.getenv('VIBER_ENABLE_SEND') == '1' if send_enabled is None else send_enabled
@@ -157,6 +157,12 @@ class Service:
             return {**result, 'recipient': recipient}
     def list_chats(self):
         with self.transaction(): return self.backend.read('sidebar')
+    def read_visible(self, region='conversation'):
+        if region not in ('conversation', 'sidebar', 'header', 'status'):
+            raise SafetyError('Invalid visible region')
+        with self.transaction():
+            result = self.backend.read(region)
+            return {**result, 'recipient_verified': False, 'send_authorized': False}
     @staticmethod
     def validate_text(text):
         if not isinstance(text, str) or not text or len(text)>10000 or '\x00' in text:
@@ -170,9 +176,11 @@ class Service:
         self.verify(recipient)
         if self.backend.draft() != text: raise SafetyError('Exact Unicode draft verification failed')
         return {'drafted': True, 'sent': False, 'verified': True, 'recipient': recipient}
-    def put_draft(self, text):
+    def put_draft(self, text, expected_recipient=None):
         self.validate_text(text)
-        with self.transaction(): return self.draft(self.identity(), text)
+        expected = phone(expected_recipient) if expected_recipient is not None else None
+        with self.transaction():
+            return self.draft(expected if expected is not None else self.identity(), text)
     def wait_for_send(self, recipient, text, before):
         """Observe only; never repeat the send, write, or navigation action.
 
@@ -212,6 +220,9 @@ class Service:
             attempted = False
             result = {'status': 'blocked', 'attempted': False, 'sent': False, 'delivered': None, 'verified': False}
             try:
+                preflight = getattr(self.backend, 'preflight_send', None)
+                if preflight is not None:
+                    preflight()
                 if navigate: self.navigate(recipient, 'My Notes' if recipient=='self:my-notes' else None)
                 self.draft(recipient, text)
                 before = {m['id'] for m in self.backend.messages()}
@@ -219,6 +230,8 @@ class Service:
                 if self.backend.draft() != text: raise SafetyError('Draft changed before send')
                 attempted = True
                 self.backend.send(recipient, text)
+                if getattr(self.backend, 'stable_message_ids', True) is False:
+                    raise SafetyError('no_stable_message_ids')
                 verified = self.wait_for_send(recipient, text, before)
                 result = {'status': 'sent' if verified else 'unknown', 'attempted': True,
                           'sent': True if verified else None, 'delivered': None, 'verified': verified}

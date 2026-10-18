@@ -48,22 +48,22 @@ def main():
                  'selectors':{key:paths[name] for key,name in {'identity':'Identity','composer':'Composer',
                    'search':'Search','results':'Results','conversation':'Conversation','sidebar':'Sidebar','send':'Synthetic Send'}.items()},
                  'outgoing_message':{'role':'text','name':'not-a-real-message'},'self_description':'synthetic-self-marker'}
-        with tempfile.TemporaryDirectory(prefix='viber-synthetic-',dir=os.environ['TMPDIR']) as tmp:
+        with tempfile.TemporaryDirectory(prefix='viber-synthetic-') as tmp:
             path=Path(tmp)/'profile.json';path.write_text(json.dumps(profile))
             backend=LinuxBackend(str(path))
             # Direct worker check exposes Python API failures only on this synthetic tree.
             from atspi_worker import run
-            assert run({'profile':str(path),'action':'identity'},Atspi)=='0981901991'
-            assert backend.identity()=='0981901991'
+            assert run({'profile':str(path),'action':'identity'},Atspi)=='2025550123'
+            assert backend.identity()=='2025550123'
             assert backend.draft()==''
             value='Привіт 👋\nЮнікод ї є І — SYNTHETIC'
-            backend.write(value, '0981901991')
+            backend.write(value, '2025550123')
             assert backend.draft()==value
-            assert backend.navigate('0981901991')['matched']=='0981901991'
+            assert backend.navigate('2025550123')['matched']=='2025550123'
             assert backend.read('conversation')['lines']==['SYNTHETIC conversation only']
             assert backend.read('sidebar')['lines']==['SYNTHETIC sidebar only']
             assert backend.messages()==[]
-            backend.send('0981901991', value)  # Synthetic local GTK callback only, never Viber/network.
+            backend.send('2025550123', value)  # Synthetic local GTK callback only, never Viber/network.
             assert backend.draft()==''
             assert backend.read('conversation')['lines']==[value]
             assert backend.stop()['stopped']

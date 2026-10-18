@@ -3,7 +3,7 @@ import json
 import pytest
 from linux_domain import Service, SafetyError, phone
 
-NUMBER = '0981901991'
+NUMBER = '2025550123'
 TEXT = 'Привіт 👋\nЇжак є тут!'
 
 class Fake:
@@ -62,7 +62,7 @@ def test_each_send_tool(setup,method):
     assert result=={'status':'sent','attempted':True,'sent':True,'delivered':None,'verified':True}
     assert b.sends==1
 
-@pytest.mark.parametrize('value',[' 0981901991','0981901991 ','+0981901991','０９８１９０１９９１','Name','+380 981901991',''])
+@pytest.mark.parametrize('value',[' 2025550123','2025550123 ','+02025550123','２０２５５５０１２３','Name','+1 2025550123',''])
 def test_no_silent_normalization(value):
     with pytest.raises(SafetyError): phone(value)
 
@@ -88,8 +88,24 @@ def test_protect_draft(setup):
     with pytest.raises(SafetyError): s.put_draft(TEXT)
     assert b.value=='Existing private draft'
 
+def test_expected_draft_recipient_blocks_chat_switch_after_precheck(setup):
+    s,b=setup
+    assert b.identity()==NUMBER  # Earlier client-side precheck.
+    b.recipient='+12025550199'
+    def forbidden_write(*args): pytest.fail('Wrote into changed chat')
+    b.write=forbidden_write
+    with pytest.raises(SafetyError, match='Exact recipient identity not verified'):
+        s.put_draft(TEXT, expected_recipient=NUMBER)
+    assert b.value=='' and b.sends==0
+
+def test_expected_draft_recipient_validated_and_preserved(setup):
+    s,b=setup
+    result=s.put_draft(TEXT, expected_recipient=NUMBER)
+    assert result['recipient']==NUMBER and result['verified'] is True
+    assert b.value==TEXT and b.sends==0
+
 def test_mismatch_recipient(setup):
-    s,b=setup;b.recipient='0981901992'
+    s,b=setup;b.recipient='2025550199'
     with pytest.raises(SafetyError): s.open_chat(NUMBER)
     assert b.sends==0
 
