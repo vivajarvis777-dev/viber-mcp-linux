@@ -47,9 +47,9 @@ async def list_chats() -> dict:
     return await invoke(service.list_chats)
 
 @mcp.tool(annotations={'readOnlyHint': False, 'destructiveHint': False, 'idempotentHint': False, 'openWorldHint': True})
-async def put_draft(text: str) -> dict:
-    """Place Unicode-verified draft without overwriting another draft or sending."""
-    return await invoke(service.put_draft, text)
+async def put_draft(text: str, expected_recipient: str | None = None) -> dict:
+    """Place verified draft; pin expected_recipient to reject a changed chat before input."""
+    return await invoke(service.put_draft, text, expected_recipient)
 
 @mcp.tool(annotations={'readOnlyHint': False, 'destructiveHint': False, 'idempotentHint': False, 'openWorldHint': True})
 async def save_to_my_notes(text: str, approval_token: str | None = None) -> dict:

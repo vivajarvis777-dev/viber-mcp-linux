@@ -176,9 +176,11 @@ class Service:
         self.verify(recipient)
         if self.backend.draft() != text: raise SafetyError('Exact Unicode draft verification failed')
         return {'drafted': True, 'sent': False, 'verified': True, 'recipient': recipient}
-    def put_draft(self, text):
+    def put_draft(self, text, expected_recipient=None):
         self.validate_text(text)
-        with self.transaction(): return self.draft(self.identity(), text)
+        expected = phone(expected_recipient) if expected_recipient is not None else None
+        with self.transaction():
+            return self.draft(expected if expected is not None else self.identity(), text)
     def wait_for_send(self, recipient, text, before):
         """Observe only; never repeat the send, write, or navigation action.
 

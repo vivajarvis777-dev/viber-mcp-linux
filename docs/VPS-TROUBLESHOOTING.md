@@ -74,3 +74,17 @@ returncode/timeout_seconds. Немає raw argv, stdin, stderr, exception text,
 retry чи довших тайм-аутів. Worker timeout/exit також мають фіксовану категорію.
 Помилка cleanup не підміняє початкову помилку операції; коли сама операція
 успішна, невдалий cleanup усе одно блокує результат.
+
+Acceptance helper `scripts/draft_acceptance.py` перевіряє реальний запис і читання
+probe у свіжому diagnostic path перед будь-яким UI-кроком тесту. Використовувати
+вже наявний0700 state-каталог; назва private сама по собі не доводить права.
+Клієнтський процес і MCP server запускаються під тим самим користувачем з тим
+самим `VIBER_DIAGNOSTICS_FILE`; це треба перевірити при створенні StdioServerParameters.
+Helper не змінює права й не надає погодження на тест.
+
+Передавати exact expected_recipient, bounded `X11Backend.identity` та native
+`X11Backend.draft` readers. Helper перевіряє actual health send_enabled=false,
+номер і порожнє поле, а RPC put_draft передає expected_recipient для повторної
+перевірки на сервері до write. Максимум один put_draft,30 с, без retry.
+Невизначений або помилковий результат спершу перевіряється окремим read-only
+читанням поля. Погодження потрібне на конкретний обмежений живий тест.

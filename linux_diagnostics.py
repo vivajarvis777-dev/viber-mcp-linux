@@ -11,8 +11,9 @@ _phase = ContextVar('viber_ui_phase', default='setup')
 PHASES = {'setup', 'identity', 'draft', 'write', 'navigate', 'send', 'read',
           'preflight_send', 'messages', 'cleanup', 'worker'}
 COMMANDS = {'window_search', 'window_focus', 'window_pid', 'window_geometry',
-            'pointer', 'keyboard', 'clipboard', 'native_text', 'other', 'worker'}
-FAILURES = {'timeout', 'exit', 'os', 'cleanup', 'worker_exit'}
+            'pointer', 'keyboard', 'clipboard', 'native_text', 'other', 'worker',
+            'diagnostic_probe'}
+FAILURES = {'timeout', 'exit', 'os', 'cleanup', 'worker_exit', 'probe'}
 
 
 @contextmanager
@@ -50,7 +51,8 @@ def record(command_kind, failure_kind, *, returncode=None, timeout=None):
             event['returncode'] = returncode
         if type(timeout) in (int, float) and 0 < timeout <= 60:
             event['timeout_seconds'] = timeout
-        os.write(fd, (json.dumps(event) + '\n').encode())
+        payload = (json.dumps(event) + '\n').encode()
+        return os.write(fd, payload) == len(payload)
     except OSError:
         pass
     finally:

@@ -465,3 +465,36 @@ Development read-only MCP probe with diagnostics enabled succeeded in1005ms;
 no diagnostic file was created because there was no failure. No further live
 input or send was performed. Production remains on its read-only release.
 The repair makes the next failure diagnosable; it is NOT a verified input fix.
+
+## Diagnostic acceptance attempt and corrected harness
+
+The owner explicitly authorized one further put_draft with diagnostics. Before
+that call native draft length0, PID3182753 and geometry459,94,1085,780 were
+verified. The single call returned ui_command_failed after11428ms; SEND=0.
+No diagnostic event was recorded. Investigation confirmed the selected review/
+private directory was UID1003/mode0775, so the owner-only logger correctly
+refused it. This was an acceptance setup mistake, not an identified X11 cause.
+Afterwards native draft length0 and actual approval rows0 were reverified.
+
+The existing ~/.local/state/viber-mcp-linux directory is UID1003/mode0700.
+An intentionally failing read-only xwininfo command wrote a real0600 diagnostic
+there: setup/window_geometry/exit/returncode1. It did not input into the UI.
+No existing access rights were changed. UID1003, the Viber process owner and
+.Xauthority owner1003/mode0600/readable were checked without reading cookies;
+Hermes service User=hannelora remained active.
+
+Prepared scripts/draft_acceptance.py. It refuses BEFORE put_draft if an actual
+probe record cannot be written and read, if the diagnostic path was already
+used, if the supplied environment is not draft-only, or if actual MCP health
+does not return literal send_enabled=false. The caller must use bounded backend
+readers for current expected phone and empty composer. The RPC includes the
+new optional expected_recipient; Service verifies it before backend.write,
+preventing a chat switch after the earlier client precheck from selecting a
+different current chat. Success also requires exact recipient and native text.
+The put_draft RPC has a30s ceiling; timeout/error causes no retries/post-write UI.
+
+149 tests passed in10.25s, including insecure diagnostic destination blocking
+before RPC, one-call behavior, wrong actual health, RPC timeout, current number/
+draft mismatch, changed server-side recipient and exact successful readback.
+Real MCP protocol smoke passed and confirms the optional input schema. No live
+input has been performed with this corrected acceptance helper.

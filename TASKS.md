@@ -13,7 +13,7 @@
 - [x] Погоджено відновити AT-SPI та перезапустити Viber; Text читання працює.
 - [x] Застосувати погоджений SDK2 patch, підключити чотири read-only tools Hermes.
 - [x] Перезапустити тільки погоджений Hermes gateway; перевірити actual registry dispatch.
-- [x] Негативні тести фокусу, номера, clipboard failure, replay; 133 тести пройшло.
+- [x] Негативні тести фокусу, номера, clipboard failure, replay; 149 тестів пройшло.
 - [ ] Підтвердити точний Unicode-текст чернетки в живому Viber через MCP.
 - [ ] Окремий погоджений тест send із незалежним human approval; перевірка на телефоні.
 - [x] Код07320d8: Debian/X11 CI успішний; PR оновлено, лишається draft.
@@ -32,9 +32,20 @@ status працює (987 мс). Цей тест не усунув проблем
 
 Підготовлено приватну opt-in діагностику command_kind/phase/failure_kind та
 збереження первинної помилки при cleanup failure. Це виправлення діагностики,
-а не підтверджене усунення X11-збою. 133 unit tests, protocol smoke та ізольований
+а не підтверджене усунення X11-збою. 149 unit tests, protocol smoke та ізольований
 X11 fixture пройшли; development read-only MCP probe пройшов за1005 мс.
 Наступний крок: один обмежений draft-only acceptance test із цією діагностикою,
 точний номер/вікно/Unicode. Нових live input/send після попереднього тесту не було.
 Критерій успіху: підтверджена точна чернетка й успішний результат MCP.
 До live send цей критерій і незалежне human approval обов'язкові.
+
+Додатковий погоджений тест із діагностикою повернув ui_command_failed за11428 мс.
+Після нього draft length0, approval rows0. Журнал не створився: помилка підготовки
+вибрала каталог0775, який logger правильно відхилив. Перевірено реальний запис
+0600 у вже наявному state-каталозі0700 без UI input.
+
+Новий acceptance helper перевіряє реальний probe write/read ДО RPC, actual health
+send_enabled=false, поточний номер та порожнє поле. put_draft тепер має optional
+expected_recipient із server-side verify до write; тест зміни чату проходить.
+RPC обмежений30 с, без retry після timeout/error.149 тестів і protocol smoke
+пройшли. Новий live test не запускався; для нього потрібна окрема згода.
