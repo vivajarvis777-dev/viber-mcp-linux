@@ -135,7 +135,7 @@ class ViberAutomation:
         wh = int(lines["  Height"].strip())
         return wx, wy, ww, wh
 
-    def verify_header_contact(self, phone: str) -> bool:
+    def verify_header_contact(self, phone: str, timeout: float = 3.0) -> bool:
         """Verify that open chat header visually matches reference image for the given contact."""
         if phone not in SAVED_CONTACTS:
             return False
@@ -143,22 +143,26 @@ class ViberAutomation:
         ref_path = Path(__file__).parent / "private" / ref_filename
         if not ref_path.exists():
             return False
-        try:
-            wx, wy, _, _ = self.get_window_geometry()
-            bbox = (wx + 299, wy + 40, wx + 299 + 302, wy + 40 + 43)
-            img = ImageGrab.grab(bbox=bbox, xdisplay=self.display).convert("RGB")
-            b_cur = ImageOps.grayscale(img).point(lambda x: 0 if x < 150 else 255).tobytes()
 
-            with open(ref_path, "rb") as f:
-                ref = Image.open(f).convert("RGB")
-            b_ref = ImageOps.grayscale(ref).point(lambda x: 0 if x < 150 else 255).tobytes()
+        t_end = time.time() + timeout
+        while time.time() <= t_end:
+            try:
+                wx, wy, _, _ = self.get_window_geometry()
+                bbox = (wx + 299, wy + 40, wx + 299 + 302, wy + 40 + 43)
+                img = ImageGrab.grab(bbox=bbox, xdisplay=self.display).convert("RGB")
+                b_cur = ImageOps.grayscale(img).point(lambda x: 0 if x < 150 else 255).tobytes()
 
-            matched = (b_cur == b_ref)
-            if matched:
-                self.current_phone = phone
-            return matched
-        except Exception:
-            return False
+                with open(ref_path, "rb") as f:
+                    ref = Image.open(f).convert("RGB")
+                b_ref = ImageOps.grayscale(ref).point(lambda x: 0 if x < 150 else 255).tobytes()
+
+                if b_cur == b_ref:
+                    self.current_phone = phone
+                    return True
+            except Exception:
+                pass
+            time.sleep(0.25)
+        return False
 
     def get_editor_text(self) -> str:
         bus = self.get_a11y_bus()
