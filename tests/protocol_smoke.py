@@ -23,7 +23,7 @@ async def smoke(state):
             by_name={tool.name:tool for tool in tools.tools}
             for name in ('health','read_visible','list_chats','list_contacts'):
                 assert by_name[name].annotations.readOnlyHint is True, name
-            for name in ('send_message','reply','put_draft'):
+            for name in ('send_message','reply','put_draft','read_open_chat'):
                 assert by_name[name].annotations.readOnlyHint is False, name
             health=await session.call_tool('health',{})
             assert not health.isError

@@ -61,9 +61,9 @@ async def open_my_notes() -> dict:
     """Open verified self-chat; label alone is not self identity proof."""
     return await invoke(service.open_my_notes)
 
-@mcp.tool(annotations={'readOnlyHint': True, 'destructiveHint': False, 'idempotentHint': True, 'openWorldHint': False})
+@mcp.tool(annotations={'readOnlyHint': False, 'destructiveHint': False, 'idempotentHint': False, 'openWorldHint': False})
 async def read_open_chat() -> dict:
-    """Read visible conversation, not sidebar or offscreen history."""
+    """Read verified visible chat; identity may use the contact menu and clipboard."""
     return await invoke(service.read_open_chat)
 
 @mcp.tool(annotations={'readOnlyHint': True, 'destructiveHint': False, 'idempotentHint': True, 'openWorldHint': False})

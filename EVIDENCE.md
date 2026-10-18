@@ -409,3 +409,14 @@ MCP stdio protocol2025-11-25, all14 tools, disabled-send/stop checks passed.
 On the VPS an isolated Xvfb/GTK display passed OCR identity, exact Ukrainian/emoji/
 newline clipboard readback, clipboard restoration, scoped reads and one synthetic
 button callback. It did not interact with Viber or send network messages.
+
+Final metadata review: read_open_chat is conservatively marked non-read-only
+because the optional Copy number identity path opens a contact menu and changes
+then restores clipboard ownership. The protocol smoke asserts that annotation;
+read_visible/list_chats/list_contacts/health retain read-only metadata. Production
+already excludes read_open_chat, so its four-tool filter is unchanged.
+
+After that annotation change:125 tests passed in9.98s and MCP protocol smoke
+passed, including the new annotation assertion. Previous code commit4a5bea6
+passed both Debian and X11 CI (runs39110323044/39110321066); the final metadata
+commit requires its own current-head CI confirmation.
