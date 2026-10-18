@@ -62,14 +62,15 @@ Profile містить `application`, `window: {role,name}`, `selectors` із ш
 
 ## Launcher і read-only X11/OCR калібрування
 
-`desktop/Viber.desktop.in` відповідає перевіреному desktop launcher. Генератор підставляє абсолютний AppRun поточного користувача, підтримує пробіли, відхиляє небезпечні Desktop Entry metacharacters; **не перезаписує** наявний файл і не запускає програму:
+`install_launcher.py` встановлює **обидва** ярлики: меню в `$XDG_DATA_HOME/applications` (типово `~/.local/share/applications`) та робочий стіл із `xdg-user-dir DESKTOP`. Абсолютні AppRun, bundled icon і робочий каталог; executable mode, best-effort GVfs trust і оновлення desktop database. DISPLAY/D-Bus успадковуються від чинної сесії, не зашиті в ярлик. Програму installer не запускає, autostart/акаунт не змінює.
 
 ```sh
-/usr/bin/python3 install_launcher.py --output "$HOME/.local/share/applications/Viber.desktop"
-desktop-file-validate "$HOME/.local/share/applications/Viber.desktop"
+/usr/bin/python3 install_launcher.py
+# Тільки для явно погодженого ремонту наявних ярликів:
+/usr/bin/python3 install_launcher.py --replace
 ```
 
-Не запускати повторно поверх існуючого Desktop/Viber.desktop. Trust/autostart installer не змінює.
+Типово наявні файли захищені від перезапису; symlink відхиляється навіть із `--replace`. `--output PATH` залишає режим одного файла. Реальна перевірка 2026-10-18: `gio launch` desktop entry та `gtk-launch Viber` активували те саме видиме вікно/PID без дублювання. Відсутній пункт меню й нерозв'язана theme icon виправлені; первинний reported launch failure не відтворився зі старим ярликом у свіжій сесії. Offline/messaging — окрема невирішена проблема.
 
 `x11_probe.py` — окрема opt-in діагностика, НЕ заміна backend. Потрібні system Python з Pillow, xdotool і Tesseract з eng data. Вона перевіряє єдине видиме Viber-вікно, foreground, власний UID/процес Viber, незмінну геометрію; захоплює тільки configured header rectangle у пам’ять. Не торкається clipboard, не генерує input, не повертає raw OCR/private text. OCR завжди `recipient_verified:false`, `send_authorized:false`, навіть при точному збігу. Overlay/occlusion та помилки OCR не дозволяють використовувати цей результат як доказ identity.
 

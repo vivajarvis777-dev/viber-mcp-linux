@@ -8,6 +8,7 @@ def executable(tmp_path, name='App Run'):
     path = tmp_path / name
     path.write_text('#!/bin/sh\nexit 0\n')
     path.chmod(0o755)
+    (tmp_path / 'viber.png').write_bytes(b'fixture')
     return path
 
 

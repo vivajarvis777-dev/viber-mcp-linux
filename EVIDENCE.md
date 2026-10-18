@@ -1,5 +1,37 @@
 # Verification evidence
 
+## Desktop/menu repair — 2026-10-18
+
+- Fresh own XFCE process environment: DISPLAY `:10.0`, D-Bus
+  `unix:path=/run/user/1003/bus`; `xdg-user-dir DESKTOP` returned
+  `/home/hannelora/Desktop`. No Viber process/window existed at initial check.
+- Read upstream AppRun, both deploy hooks, AppRun.wrapped and viber.desktop.
+  AppRun already resolves APPDIR independently of cwd; no environment defect
+  demonstrated. Old desktop entry was executable and metadata::trusted=true.
+  Actual `gio launch` of that OLD entry succeeded, starting PID 3094654 and
+  visible window 54525982. Thus the reported prior launch failure did not
+  reproduce; do not invent a cwd/trust diagnosis or claim it was fixed by Path.
+- Confirmed integration defects: no user application-menu entry; Gtk theme
+  `has_icon("viber")` false. Repaired both entries with absolute bundled icon,
+  deterministic Path, executable mode and trust; no fixed DISPLAY/DBus values.
+- Installed/read back `/home/hannelora/Desktop/Viber.desktop` and
+  `/home/hannelora/.local/share/applications/Viber.desktop`. Both validate.
+  Desktop access::can-execute=true, metadata::trusted=true. Gio DesktopAppInfo
+  resolves Viber.desktop from the menu directory and should_show()=true.
+- Actual repaired menu `gtk-launch Viber` exit 0: before/after PID 3094654
+  unchanged, exactly one visible Viber window 54525982, class Viber/ViberPC,
+  WM_STATE Normal, geometry 950x780 at 464,123. _NET_ACTIVE_WINDOW 0x340001e
+  matches that window. Repaired desktop `gio launch` also exit 0; same visible
+  window and PID. This verifies real entry activation, not only validation.
+  No mouse grab, screenshot, chat read, clipboard, typing or message send.
+- No existing process terminated/restarted; account/services/credentials untouched.
+  Prior offline problem remains unresolved, not retested as messaging success.
+  Stale accessibility socket warning still observed during icon-theme query.
+- Installer defaults to both XDG locations, preserves existing files unless
+  explicit --replace, rejects symlinks, validates bundled icon before writes.
+  Four added regression tests failed before implementation; full suite afterward:
+  **76 passed in 9.09s**. Protected CLAUDE.md untouched.
+
 ## Live follow-up — 2026-10-18, after desktop restoration
 
 This section supersedes the historical no-desktop blocker below, not the absence
