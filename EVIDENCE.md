@@ -498,3 +498,33 @@ before RPC, one-call behavior, wrong actual health, RPC timeout, current number/
 draft mismatch, changed server-side recipient and exact successful readback.
 Real MCP protocol smoke passed and confirms the optional input schema. No live
 input has been performed with this corrected acceptance helper.
+
+## Approved guarded trial — 2026-10-18
+
+The owner explicitly approved the next single draft test. Before it, the review
+source hashes matched commit121edf3, effective UID/state-directory owner were1003,
+state directory mode0700, native composer enabled, send calibration disabled,
+and the sole visible Viber window54525982 was foreground.
+
+The corrected acceptance helper wrote/read its diagnostic probe and called actual
+MCP health once. It then stopped during the bounded recipient precheck:
+`clipboard_failed`,4694ms total, **put_draft calls0**, health calls1, SEND=0.
+Recorded event: phase=identity, command_kind=clipboard, failure_kind=timeout,
+timeout_seconds=3. The protected diagnostic file was present in the state dir.
+A separate native read afterwards confirmed draft length0; approval ledger rows0.
+No write retry or send was performed.
+
+Read-only investigation afterwards: CLIPBOARD owner window2097153 advertised
+TARGETS/TIMESTAMP/MULTIPLE/STRING/UTF8_STRING; it exposed no _NET_WM_PID or WM_CLASS,
+so no owner process was attributed. An xsel read returned0 bytes after1606ms;
+xclip UTF8 read returned exit1 after1830ms with0 bytes; a subsequent bounded
+xsel read exceeded3s. Clipboard contents were not printed. These probes establish
+unstable/unavailable clipboard retrieval, not the identity of the faulty process
+or the cause of previous X11 connection failures. No timeout was raised and no
+fallback converted a failed read into an empty clipboard.
+
+Next proposed action, not performed: explicitly clear only this desktop's
+CLIPBOARD selection, verify the reset once, then run one diagnostic draft-only
+trial with the same expected recipient/text guards. Clearing may discard existing
+copied content, so separate owner approval is required. No production/Remmina
+changes, additional access, service restart, or send is proposed.

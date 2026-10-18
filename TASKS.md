@@ -49,3 +49,12 @@ send_enabled=false, поточний номер та порожнє поле. pu
 expected_recipient із server-side verify до write; тест зміни чату проходить.
 RPC обмежений30 с, без retry після timeout/error.149 тестів і protocol smoke
 пройшли. Новий live test не запускався; для нього потрібна окрема згода.
+
+## Останній погоджений тест
+
+Corrected helper пройшов diagnostic probe й actual health, але перевірка адресата
+зупинилася на clipboard timeout3с. Загалом4694мс; put_draft calls0, draft length0,
+approval rows0. Діагностика цього разу збережена. Read-only probes підтвердили
+нестабільне отримання clipboard; процес-власник не встановлений.
+Пропозиція наступного кроку: за окремою згодою очистити лише CLIPBOARD цього
+сеансу та провести один guarded draft-only тест. Поки очищення не виконано.
