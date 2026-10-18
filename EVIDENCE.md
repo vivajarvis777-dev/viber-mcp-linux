@@ -520,7 +520,7 @@ so no owner process was attributed. An xsel read returned0 bytes after1606ms;
 xclip UTF8 read returned exit1 after1830ms with0 bytes; a subsequent bounded
 xsel read exceeded3s. Clipboard contents were not printed. These probes establish
 unstable/unavailable clipboard retrieval, not the identity of the faulty process
-or the cause of previous X11 connection failures. No timeout was raised and no
+or the cause of previous X11 connection failures. No timeout limit was increased and no
 fallback converted a failed read into an empty clipboard.
 
 Next proposed action, not performed: explicitly clear only this desktop's
