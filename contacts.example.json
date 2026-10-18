@@ -1,4 +1,19 @@
 {
-  "Me": "+639171234567",
-  "Mom": "+639181234567"
+  "+380981234567": {
+    "name": "Jane Doe",
+    "aliases": [
+      "Jane",
+      "Colleague",
+      "Project Manager"
+    ],
+    "ref_image": null
+  },
+  "+380671234567": {
+    "name": "Support Desk",
+    "aliases": [
+      "Support",
+      "Helpdesk"
+    ],
+    "ref_image": null
+  }
 }

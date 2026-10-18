@@ -29,28 +29,33 @@ from PIL import Image, ImageGrab, ImageOps
 
 from mcp.server.fastmcp import FastMCP
 
-VIBER_LAUNCHER = os.getenv("VIBER_LAUNCHER", "/home/hannelora/.local/opt/viber-deb-27.3.0.2/launch-viber")
-DISPLAY = os.getenv("DISPLAY", ":10.0")
-SESSION_BUS = os.getenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1003/bus")
+def find_viber_launcher() -> str:
+    env_launcher = os.getenv("VIBER_LAUNCHER")
+    if env_launcher and os.path.exists(env_launcher):
+        return env_launcher
+    for candidate in (
+        shutil.which("viber"),
+        shutil.which("Viber"),
+        "/opt/viber/Viber",
+        "/usr/bin/viber",
+        os.path.expanduser("~/.local/opt/viber-deb-27.3.0.2/launch-viber")
+    ):
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return "viber"
 
-os.environ["DISPLAY"] = DISPLAY
-os.environ["DBUS_SESSION_BUS_ADDRESS"] = SESSION_BUS
-os.environ["XDG_RUNTIME_DIR"] = "/run/user/1003"
+VIBER_LAUNCHER = find_viber_launcher()
+UID = os.getuid() if hasattr(os, "getuid") else 1000
+DISPLAY = os.getenv("DISPLAY", ":0")
+SESSION_BUS = os.getenv("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{UID}/bus")
+XDG_RUNTIME_DIR = os.getenv("XDG_RUNTIME_DIR", f"/run/user/{UID}")
+
+os.environ.setdefault("DISPLAY", DISPLAY)
+os.environ.setdefault("DBUS_SESSION_BUS_ADDRESS", SESSION_BUS)
+os.environ.setdefault("XDG_RUNTIME_DIR", XDG_RUNTIME_DIR)
 
 CONTACTS_FILE = Path(__file__).parent / "contacts.json"
-
-DEFAULT_CONTACTS = {
-    "+380981901991": {
-        "name": "Юрій Приходько (Юрко Господар)",
-        "aliases": ["Юрко", "Господар", "Юрій", "Приходько", "Власник", "Юрко Господар"],
-        "ref_image": "header-reference.png"
-    },
-    "+380674032750": {
-        "name": "Я Йоп",
-        "aliases": ["Йоп", "Я Йоп", "Тест 2", "Другий", "Другий номер"],
-        "ref_image": "header-380674032750.png"
-    }
-}
+DEFAULT_CONTACTS = {}
 
 mcp = FastMCP("viber_linux_mcp", instructions="Universal Viber MCP integration for Hermes on Linux")
 _viber_lock = asyncio.Lock()
