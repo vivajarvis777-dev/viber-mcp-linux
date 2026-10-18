@@ -580,3 +580,48 @@ clearing occurred. Proposed next trial ID: VBR-20261018-STRICT-01, not authorize
 or executed. It uses one fresh owner-only diagnostic path, actual health send0,
 bounded identity/native draft readers and at most one expected-recipient
 put_draft. No clearing of the original clipboard, restart or new access.
+
+## VBR-20261018-STRICT-01 — consumed, no retry
+
+A fresh approval was relayed with transcript reference
+Sentinel_a643c9e1908c8191b0bf4d675974318e from source thread
+01a118c3-ff1a-70f3-b53c-ef7b3ae670cb through coordinator
+01a14b77-72b0-77f5-84c3-452944f34032. Before starting, the fixed trial marker
+and diagnostic path were absent; source hashes matched exactly
+3ef44c1232b6bc9245275c02e0374327ecf3f5ca; UID/owner1003 and state mode0700
+were verified. A0600 exclusive trial marker was reserved before the attempt.
+The source release and production configuration were not changed.
+
+Actual result:11897ms, health calls1, put_draft calls0, SEND=0, approval rows0.
+The actual-session health guard passed before recipient checking. The successful
+initial clipboard snapshot allowed the identity-menu path to begin, but reading
+the copied value then failed. Diagnostic sequence:
+
+- setup / diagnostic_probe / probe
+- identity_copy / clipboard / timeout3s (primary failure)
+- clipboard_restore / clipboard / timeout2s
+- cleanup / other / cleanup
+- identity / window_focus / timeout3s while trying to cancel the menu
+- cleanup / keyboard / cleanup
+
+The MCP stdio context surfaced an ExceptionGroup wrapper; its generic string is
+not the root cause. The first fixed diagnostic identifies the failed clipboard
+read; the snapshot-restore and menu-cleanup failures are subsequent events.
+No put_draft RPC, text insertion, send, automatic retry or manual clearing was
+performed. The transient clipboard mutations of the approved identity check did
+occur. The original clipboard snapshot and post-attempt content were both
+readable but **not equal**. No raw content or content hashes were printed or
+saved. Restoration failed and was not retried.
+
+The initial post-check's window search timed out, returning
+window_missing_or_ambiguous; that did NOT establish that Viber was closed or
+that the composer was empty. A separate read-only AT-SPI helper subsequently
+validated the same owned Viber PID3182753/frame/geometry and read draft length0.
+This independent result resolves the editor uncertainty: no exact test draft
+was present. The clipboard remained changed; no additional input was attempted.
+
+Durable private record: trial-VBR-20261018-STRICT-01.json; diagnostics:
+acceptance-VBR-20261018-STRICT-01.jsonl, both in the existing owner-only state
+directory. The marker records consumed=true/completed=true and the independent
+post-check. Local review manifest is updated to executed=true. This trial and
+its approval cannot authorize another attempt. Runtime/Remmina/access unchanged.

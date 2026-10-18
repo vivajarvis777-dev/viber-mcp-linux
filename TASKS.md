@@ -66,8 +66,18 @@ approval rows0. Діагностика цього разу збережена. R
 - [x] Блокувати snapshot при зміні owner; прибрати Escape після невдалого snapshot.
 - [x] 160 unit tests, protocol,7 hostile-owner Xvfb cases, full Unicode/restore fixture.
 - [x] Додати fixture в X11 CI та описати GTK3 dependency без встановлень на VPS.
-- [ ] Після нової окремої згоди — trial VBR-20261018-STRICT-01, максимум один put_draft.
+- [x] За новою згодою виконати trial VBR-20261018-STRICT-01; зупинився до put_draft.
 
 Попередня спроба4694мс спожита; переказ старої згоди не дозволяє дубль.
 Новий trial не очищує реальний буфер. Під час цього етапу не було live UI/read
 операцій, змін production, Remmina, тайм-ауту3с чи прав доступу.
+
+## STRICT-01: виконано, згода спожита
+
+11897мс, health1, put_draft0, SEND0, approval rows0. Після Copy number reader
+перевищив3с, відновлення clipboard —2с; cleanup перевірка фокусу також timeout.
+Буфер до/після читабельний, але відрізняється. Повторного відновлення не було.
+Перший post-check вікна не вдався; незалежний AT-SPI post-check підтвердив поле
+довжиною0. ExceptionGroup — wrapper; primary event identity_copy/clipboard/timeout3s.
+Живий ввід ще не працює. Новий trial/очищення/рестарт не погоджені; поточний
+marker виключає повторне використання цієї згоди.
