@@ -22,6 +22,31 @@ import uuid
 
 from linux_backend import SafetyError
 from linux_errors import reason_code
+from linux_diagnostics import phase, record, restore_after
+
+
+def command_kind(args):
+    program = Path(args[0]).name
+    if program == 'xdotool':
+        return {'search': 'window_search', 'getactivewindow': 'window_focus',
+                'getwindowpid': 'window_pid', 'mousemove': 'pointer',
+                'key': 'keyboard'}.get(args[1], 'other')
+    if program == 'xwininfo':
+        return 'window_geometry'
+    if program in ('xclip', 'xsel'):
+        return 'clipboard'
+    if len(args) == 2 and Path(args[1]).name == 'atspi_text_reader.py':
+        return 'native_text'
+    return 'other'
+
+
+def record_process_error(kind, error, timeout):
+    if isinstance(error, subprocess.TimeoutExpired):
+        record(kind, 'timeout', timeout=timeout)
+    elif isinstance(error, subprocess.CalledProcessError):
+        record(kind, 'exit', returncode=error.returncode)
+    else:
+        record(kind, 'os')
 
 
 def command(args, data=None, timeout=3):
@@ -29,7 +54,14 @@ def command(args, data=None, timeout=3):
         return subprocess.run(args, input=data, capture_output=True,
                               check=True, timeout=timeout,
                               env={**os.environ, 'LC_ALL': 'C'}).stdout
-    except (OSError, subprocess.SubprocessError):
+    except subprocess.TimeoutExpired:
+        record(command_kind(args), 'timeout', timeout=timeout)
+        raise SafetyError('ui_command_failed') from None
+    except subprocess.CalledProcessError as error:
+        record(command_kind(args), 'exit', returncode=error.returncode)
+        raise SafetyError('ui_command_failed') from None
+    except OSError:
+        record(command_kind(args), 'os')
         raise SafetyError('ui_command_failed') from None
 
 
@@ -202,10 +234,11 @@ class Desktop:
                 'recipient_verified': False, 'send_authorized': False}
 
     def identity(self):
-        if self.profile.get('identity_mode') == 'clipboard_menu':
-            return self.clipboard_identity()
-        # A name, placeholder, sidebar hit or guessed country code is never identity.
-        return observed_phone(self.ocr('identity'))
+        with phase('identity'):
+            if self.profile.get('identity_mode') == 'clipboard_menu':
+                return self.clipboard_identity()
+            # A name, placeholder, sidebar hit or guessed country code is never identity.
+            return observed_phone(self.ocr('identity'))
 
     def clipboard_identity(self):
         """Copy number from the current contact's calibrated header menu, then restore clipboard."""
@@ -229,11 +262,14 @@ class Desktop:
                     time.sleep(.03)
                 if number is None:
                     raise SafetyError('identity_not_visible')
-        finally:
-            # Restore selection ownership before further X11 round trips. A successful
-            # Copy number closes its menu itself; only failures require cancellation.
-            if number is None:
+        except BaseException:
+            # Cancel a failed menu without masking the original diagnostic.
+            try:
                 self.key('Escape')
+            except Exception:
+                with phase('cleanup'):
+                    record('keyboard', 'cleanup')
+            raise
         self.guard()
         return number
 
@@ -271,7 +307,8 @@ class Desktop:
                 return subprocess.run([os.environ['VIBER_XSEL'], '--clipboard', '--output'],
                                       capture_output=True, timeout=3, check=True,
                                       env={**os.environ, 'LC_ALL': 'C.UTF-8'}).stdout
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, subprocess.SubprocessError) as error:
+                record_process_error('clipboard', error, 3)
                 raise SafetyError('clipboard_failed') from None
         return command(['xclip', '-selection', 'clipboard', '-o', '-target', 'UTF8_STRING'])
 
@@ -284,7 +321,8 @@ class Desktop:
             subprocess.run(args,
                            input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                            timeout=2, check=True, env={**os.environ, 'LC_ALL': 'C.UTF-8'})
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError) as error:
+            record_process_error('clipboard', error, 2)
             raise SafetyError('clipboard_failed') from None
 
     clipboard_owner = staticmethod(selection_owner)
@@ -297,10 +335,8 @@ class Desktop:
     def clipboard(self):
         self.guard(input_action=True)
         if self.clipboard_owner() == 0:
-            try:
+            with restore_after(self.clipboard_clear):
                 yield
-            finally:
-                self.clipboard_clear()
             return
         try:
             targets = command(['xclip', '-selection', 'clipboard', '-o', '-target', 'TARGETS']).decode().split()
@@ -312,10 +348,8 @@ class Desktop:
         if 'UTF8_STRING' not in targets or set(targets) - allowed:
             raise SafetyError('clipboard_unsupported')
         saved = self.clipboard_get()
-        try:
+        with restore_after(lambda: self.clipboard_set(saved)):
             yield
-        finally:
-            self.clipboard_set(saved)
 
     def copy_field(self, name, allow_empty=False):
         sentinel = ('viber-mcp-' + uuid.uuid4().hex).encode()
@@ -532,7 +566,9 @@ def main():
     try:
         request = json.loads(sys.stdin.read(100_000))
         profile = json.loads(Path(request['profile']).read_text())
-        result = dispatch(Desktop(profile), request)
+        desktop = Desktop(profile)
+        with phase(request.get('action')):
+            result = dispatch(desktop, request)
         print(json.dumps({'result': result}, ensure_ascii=False))
     except Exception as exc:
         print(json.dumps({'error': reason_code(exc)}))

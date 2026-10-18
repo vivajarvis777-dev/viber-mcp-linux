@@ -441,3 +441,27 @@ on the next connection. The private backup remains outside Git.
 Code commit07320d8d7df6352881a0506fa30276a2a8d3c2af passed Debian and X11 CI
 on both push and PR runs39110425842/39110428835. Subsequent changes only update
 this acceptance record. Production checkout remains52e7ef2, read-only.
+
+## Narrow diagnostic repair, no further live input
+
+Six baseline and six actual-MCP-environment read-only X11 queries all returned0.
+MCP DISPLAY=:10.0/XDG session settings matched the live session; its private
+OCR library directory contains no libX11/libxcb/libxdo overrides. The first
+baseline query took695ms, later queries9–22ms; MCP queries10–16ms. This does not
+identify the intermittent XOpenDisplay failure or attribute it to clipboard.
+
+Confirmed code-level diagnostic defects: command() discarded timeout/exit kind,
+and clipboard restoration/menu cancellation could replace the original error.
+The narrow patch adds opt-in, owner-only, bounded JSONL fixed categories and
+preserves the first exception when cleanup also fails. No raw argv/stdin/stderr,
+private text, phone, token, or exception strings are recorded. FIFO logging is
+nonblocking and symlinks/public destinations are rejected. No input retry added.
+
+Final local suite:133 passed in10.15s. Protocol smoke passed (14 tools and
+annotation guards). Isolated VPS Xvfb fixture passed exact Unicode/clipboard/
+button verification after the cleanup change. The final O_NONBLOCK guard only
+affects opt-in diagnostics and is additionally tested with a FIFO subprocess.
+Development read-only MCP probe with diagnostics enabled succeeded in1005ms;
+no diagnostic file was created because there was no failure. No further live
+input or send was performed. Production remains on its read-only release.
+The repair makes the next failure diagnosable; it is NOT a verified input fix.

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import threading
 from linux_errors import CODES
+from linux_diagnostics import phase, record
 
 
 class SafetyError(RuntimeError):
@@ -63,6 +64,8 @@ class LinuxBackend:
             if self.cancelled.is_set():
                 raise SafetyError('cancelled')
             if p.returncode:
+                with phase('worker'):
+                    record('worker', 'worker_exit', returncode=p.returncode)
                 raise SafetyError('AT-SPI operation failed; no retry')
             try:
                 response = json.loads(out)
@@ -75,6 +78,8 @@ class LinuxBackend:
                 raise SafetyError(code if isinstance(code, str) and code in CODES else 'operation_failed')
             return response['result']
         except subprocess.TimeoutExpired:
+            with phase('worker'):
+                record('worker', 'timeout', timeout=self.timeout)
             self.abort(p)
             p.communicate()
             raise SafetyError('AT-SPI timeout; outcome may be unknown') from None
