@@ -420,3 +420,24 @@ After that annotation change:125 tests passed in9.98s and MCP protocol smoke
 passed, including the new annotation assertion. Previous code commit4a5bea6
 passed both Debian and X11 CI (runs39110323044/39110321066); the final metadata
 commit requires its own current-head CI confirmation.
+
+## Post-reconnect acceptance attempt — 2026-10-18, 10:11 server time
+
+The owner directly confirmed a new login with Viber chats visible. The saved
+Remmina profile had disableclipboard=1. Initial guard correctly rejected the
+desktop background as foreground; the operator activated the observed Viber
+window, then verified unchanged PID3182753, geometry459,94,1085,780 and native
+draft length0. No worker auto-focus or safety guard was disabled.
+
+Exactly one subsequent MCP put_draft returned isError=true/ui_command_failed
+in4221ms, with SEND=0. No write retry was made. A separate native read afterwards
+confirmed draft length0 and the actual approval ledger still had zero rows.
+Production read_visible(status) then passed in987ms with no offline marker.
+The comparison did not fix input and does not establish clipboard/RDP as cause.
+Saved Remmina disableclipboard was restored to0, preserving other current fields;
+the established session was not interrupted again, so the setting takes effect
+on the next connection. The private backup remains outside Git.
+
+Code commit07320d8d7df6352881a0506fa30276a2a8d3c2af passed Debian and X11 CI
+on both push and PR runs39110425842/39110428835. Subsequent changes only update
+this acceptance record. Production checkout remains52e7ef2, read-only.
