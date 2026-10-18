@@ -730,8 +730,8 @@ No new live draft/send is authorized; STRICT-01 remains consumed.
 
 ### 2. Live Operational Flow Verified by Hermes Agent (Henelora)
 1. `health`: Confirms active X11 Viber window, D-Bus a11y bus connection, and contact presence.
-2. `list_contacts`: Enumerates saved approved Viber contacts (`+380981901991`: Юрко Господар).
-3. `open_chat`: Successfully focuses chat for `+380981901991` with visual header confirmation in 2.37s.
+2. `list_contacts`: Enumerates saved approved Viber contacts (`+380981234567`: Test Contact).
+3. `open_chat`: Successfully focuses chat for `+380981234567` with visual header confirmation in 2.37s.
 4. `read_open_chat`: Safely extracts recent chat messages from the verified open chat.
 5. `put_draft`: Creates and verifies exact Ukrainian draft text (e.g. `Тест Hermes ↔️ Viber: перевірка створення чернетки через MCP.`).
 6. `send_message`: Successfully sends message upon explicit operator confirmation, clears the composer, and verifies text appearance in AT-SPI history.

@@ -85,12 +85,12 @@ class ViberAutomation:
             os.environ,
             DISPLAY=self.display,
             DBUS_SESSION_BUS_ADDRESS=SESSION_BUS,
-            XDG_RUNTIME_DIR="/run/user/1003",
+            XDG_RUNTIME_DIR=XDG_RUNTIME_DIR,
         )
         self._a11y_bus = None
         self._editor_path = "/org/a11y/atspi/accessible/2147483740"
         self._send_btn_path = "/org/a11y/atspi/accessible/2147483904"
-        self.current_phone: str | None = "+380981901991"
+        self.current_phone: str | None = None
         self.contacts = self._load_contacts()
 
     def _load_contacts(self) -> dict:
