@@ -1,7 +1,7 @@
 """Hermes ↔ Viber MCP Server for Linux (X11 + AT-SPI + xclip).
 
-Direct D-Bus accessibility, native X11 clipboard integration, and visual
-header verification for Viber Desktop.
+Multi-contact Viber Desktop automation with visual header verification,
+sequential execution locking, and intelligent contact resolution.
 """
 from __future__ import annotations
 
@@ -25,9 +25,18 @@ from PIL import Image, ImageGrab, ImageOps
 
 from mcp.server.fastmcp import FastMCP
 
-# Hardcoded pilot approved address book
+# Approved address book contacts with metadata & header reference files
 SAVED_CONTACTS = {
-    "+380981901991": "Юрко Господар"
+    "+380981901991": {
+        "name": "Юрій Приходько (Юрко Господар)",
+        "aliases": ["Юрко", "Господар", "Юрій", "Приходько", "Власник", "Юрко Господар"],
+        "ref_image": "header-reference.png"
+    },
+    "+380674032750": {
+        "name": "Я Йоп",
+        "aliases": ["Йоп", "Я Йоп", "Тест 2", "Другий", "Другий номер"],
+        "ref_image": "header-380674032750.png"
+    }
 }
 
 VIBER_LAUNCHER = os.getenv("VIBER_LAUNCHER", "/home/hannelora/.local/opt/viber-deb-27.3.0.2/launch-viber")
@@ -39,6 +48,39 @@ os.environ["DBUS_SESSION_BUS_ADDRESS"] = SESSION_BUS
 os.environ["XDG_RUNTIME_DIR"] = "/run/user/1003"
 
 mcp = FastMCP("viber_linux_mcp", instructions="Viber MCP integration for Hermes on Linux")
+_viber_lock = asyncio.Lock()
+
+
+def resolve_phone(target: str) -> str:
+    """Normalize input (phone number or contact name/alias) to approved E.164 phone number."""
+    target_clean = target.strip()
+    if target_clean in SAVED_CONTACTS:
+        return target_clean
+
+    # Try matching by digits
+    digits = "".join(c for c in target_clean if c.isdigit())
+    if digits.startswith("0") and len(digits) == 10:
+        digits = "38" + digits
+    if digits.startswith("380") and len(digits) == 12:
+        candidate = "+" + digits
+        if candidate in SAVED_CONTACTS:
+            return candidate
+
+    # Match by name or alias (case-insensitive)
+    t_lower = target_clean.lower()
+    for phone, info in SAVED_CONTACTS.items():
+        if t_lower == info["name"].lower() or any(t_lower == a.lower() for a in info["aliases"]):
+            return phone
+
+    # Substring match if unambiguous
+    sub_matches = [
+        phone for phone, info in SAVED_CONTACTS.items()
+        if t_lower in info["name"].lower() or any(t_lower in a.lower() for a in info["aliases"])
+    ]
+    if len(sub_matches) == 1:
+        return sub_matches[0]
+
+    raise ValueError(f"Target '{target}' is not in the approved Viber address book")
 
 
 class ViberAutomation:
@@ -53,6 +95,7 @@ class ViberAutomation:
         self._a11y_bus = None
         self._editor_path = "/org/a11y/atspi/accessible/2147483740"
         self._send_btn_path = "/org/a11y/atspi/accessible/2147483904"
+        self.current_phone: str | None = None
 
     def get_a11y_bus(self):
         if self._a11y_bus is None:
@@ -94,9 +137,10 @@ class ViberAutomation:
 
     def verify_header_contact(self, phone: str) -> bool:
         """Verify that open chat header visually matches reference image for the given contact."""
-        if phone != "+380981901991":
+        if phone not in SAVED_CONTACTS:
             return False
-        ref_path = Path(__file__).parent / "private" / "header-reference.png"
+        ref_filename = SAVED_CONTACTS[phone]["ref_image"]
+        ref_path = Path(__file__).parent / "private" / ref_filename
         if not ref_path.exists():
             return False
         try:
@@ -109,7 +153,10 @@ class ViberAutomation:
                 ref = Image.open(f).convert("RGB")
             b_ref = ImageOps.grayscale(ref).point(lambda x: 0 if x < 150 else 255).tobytes()
 
-            return b_cur == b_ref
+            matched = (b_cur == b_ref)
+            if matched:
+                self.current_phone = phone
+            return matched
         except Exception:
             return False
 
@@ -162,9 +209,7 @@ class ViberAutomation:
 
         target_uri = f"viber://chat?number={phone}"
 
-        # In systemd services with PrivateTmp=true (like hermes-hannelora),
-        # /tmp/Viber-0-3eb is not visible in Hermes' private mount namespace.
-        # Running through systemd-run --user delegates execution to the user session slice where host /tmp is accessible.
+        # Delegate execution via systemd-run --user when running inside isolated PrivateTmp namespace
         use_systemd_run = (not os.path.exists("/tmp/Viber-0-3eb")) and (shutil.which("systemd-run") is not None)
         if use_systemd_run:
             cmd = [
@@ -202,6 +247,8 @@ class ViberAutomation:
         if not self.verify_header_contact(phone):
             raise RuntimeError(f"Chat header check failed: active chat does not match verified reference for {phone}")
 
+        self.current_phone = phone
+
     def put_draft(self, text: str) -> dict:
         if not text or len(text) > 1000:
             raise ValueError("text_length_invalid")
@@ -209,11 +256,14 @@ class ViberAutomation:
             raise ValueError("single_line_text_required")
 
         current = self.get_editor_text()
-        if current and current != text:
-            raise RuntimeError(f"Existing draft present in editor: {current!r}")
+        norm_cur = unicodedata.normalize("NFC", current).replace("\ufe0f", "")
+        norm_tx = unicodedata.normalize("NFC", text).replace("\ufe0f", "")
 
-        if current == text:
-            return {"drafted": True, "verified": True, "text": text}
+        if current and norm_cur != norm_tx:
+            raise RuntimeError(f"Existing draft present in editor: {current!r}. Clear or send it first.")
+
+        if norm_cur == norm_tx:
+            return {"drafted": True, "verified": True, "text": current}
 
         self.focus_editor()
 
@@ -231,10 +281,11 @@ class ViberAutomation:
         time.sleep(0.3)
 
         readback = self.get_editor_text()
-        if readback != text:
+        norm_rb = unicodedata.normalize("NFC", readback).replace("\ufe0f", "")
+        if readback != text and norm_rb != norm_tx:
             raise RuntimeError(f"Draft verification failed: expected {text!r}, got {readback!r}")
 
-        return {"drafted": True, "verified": True, "text": text}
+        return {"drafted": True, "verified": True, "text": readback}
 
     def send(self, expected_text: str) -> dict:
         current = self.get_editor_text()
@@ -278,17 +329,22 @@ auto = ViberAutomation()
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
 async def health() -> dict:
-    """Check Viber desktop automation status and connectivity."""
+    """Check Viber desktop automation status, connectivity, and active contact."""
     try:
         dest, _ = auto.get_viber_app()
         w_ok = subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "Viber"],
                               env=auto.env, capture_output=True, text=True).returncode == 0
-        header_ok = auto.verify_header_contact("+380981901991")
+        active_match = None
+        for phone in SAVED_CONTACTS:
+            if auto.verify_header_contact(phone):
+                active_match = {"phone": phone, "name": SAVED_CONTACTS[phone]["name"]}
+                break
+
         return {
             "status": "ok",
             "viber_accessibility": dest,
             "window_visible": w_ok,
-            "pilot_contact_active": header_ok
+            "active_contact": active_match
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -296,52 +352,117 @@ async def health() -> dict:
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
 async def list_contacts() -> dict:
-    """Return approved saved Viber address book contacts."""
-    return {"contacts": SAVED_CONTACTS}
+    """Return all approved saved Viber address book contacts."""
+    return {
+        "contacts": {
+            phone: info["name"] for phone, info in SAVED_CONTACTS.items()
+        },
+        "details": SAVED_CONTACTS
+    }
+
+
+@mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def find_contact(query: str) -> dict:
+    """Find a saved Viber contact by name, surname, alias, or phone number."""
+    q = query.strip().lower()
+    matches = []
+    digits = "".join(c for c in q if c.isdigit())
+    for phone, info in SAVED_CONTACTS.items():
+        phone_digits = "".join(c for c in phone if c.isdigit())
+        if digits and (digits in phone_digits or phone_digits in digits):
+            matches.append({"phone": phone, **info})
+            continue
+        if q in info["name"].lower() or any(q in a.lower() for a in info["aliases"]):
+            matches.append({"phone": phone, **info})
+
+    if not matches:
+        return {"found": False, "query": query, "message": f"No contacts found matching '{query}'"}
+    if len(matches) == 1:
+        return {"found": True, "query": query, "contact": matches[0]}
+    return {"found": True, "query": query, "multiple_matches": matches}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 async def open_chat(to: str) -> dict:
-    """Open verified saved contact chat by exact phone number and visually verify the header."""
-    if to not in SAVED_CONTACTS:
-        return {"ok": False, "error": f"Contact {to} is not in the approved saved address book"}
-    try:
-        await asyncio.to_thread(auto.open_chat_by_number, to)
-        return {
-            "ok": True,
-            "opened": to,
-            "contact_name": SAVED_CONTACTS[to],
-            "header_verified": True,
-            "note": f"Chat with {SAVED_CONTACTS[to]} ({to}) is open and verified against approved reference."
-        }
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    """Open verified saved contact chat by phone number, name, or alias with visual header verification."""
+    async with _viber_lock:
+        try:
+            phone = resolve_phone(to)
+        except ValueError as err:
+            return {"ok": False, "error": str(err)}
+
+        try:
+            await asyncio.to_thread(auto.open_chat_by_number, phone)
+            return {
+                "ok": True,
+                "opened": phone,
+                "contact_name": SAVED_CONTACTS[phone]["name"],
+                "header_verified": True,
+                "note": f"Chat with {SAVED_CONTACTS[phone]['name']} ({phone}) is open and visually confirmed."
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
-async def read_open_chat() -> dict:
+async def read_open_chat(to: str | None = None) -> dict:
     """Read visible messages from currently open chat via AT-SPI after verifying the recipient."""
-    verified = await asyncio.to_thread(auto.verify_header_contact, "+380981901991")
-    if not verified:
-        return {"ok": False, "error": "Active chat header could not be verified for approved contact. Reading blocked."}
-    messages = await asyncio.to_thread(auto.read_messages)
-    return {
-        "ok": True,
-        "messages": messages,
-        "count": len(messages),
-        "recipient": "+380981901991",
-        "contact_name": SAVED_CONTACTS["+380981901991"]
-    }
+    async with _viber_lock:
+        target_phone = None
+        if to:
+            try:
+                target_phone = resolve_phone(to)
+            except ValueError as err:
+                return {"ok": False, "error": str(err)}
+
+            if not auto.verify_header_contact(target_phone):
+                # Switch to requested chat
+                try:
+                    await asyncio.to_thread(auto.open_chat_by_number, target_phone)
+                except Exception as e:
+                    return {"ok": False, "error": f"Failed to switch to chat for {to}: {e}"}
+        else:
+            # Detect currently active contact
+            for p in SAVED_CONTACTS:
+                if auto.verify_header_contact(p):
+                    target_phone = p
+                    break
+            if not target_phone:
+                return {"ok": False, "error": "Active chat header could not be verified for any approved contact. Reading blocked."}
+
+        messages = await asyncio.to_thread(auto.read_messages)
+        return {
+            "ok": True,
+            "messages": messages,
+            "count": len(messages),
+            "recipient": target_phone,
+            "contact_name": SAVED_CONTACTS[target_phone]["name"]
+        }
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
-async def put_draft(text: str) -> dict:
-    """Put exact verified Ukrainian draft into open chat composer without sending."""
-    verified = await asyncio.to_thread(auto.verify_header_contact, "+380981901991")
-    if not verified:
-        return {"ok": False, "error": "Active chat header could not be verified for approved contact. Drafting blocked."}
-    result = await asyncio.to_thread(auto.put_draft, text)
-    return {"ok": True, **result}
+async def put_draft(to: str, text: str) -> dict:
+    """Put exact verified Ukrainian draft into the specified contact's composer without sending."""
+    async with _viber_lock:
+        try:
+            phone = resolve_phone(to)
+        except ValueError as err:
+            return {"ok": False, "error": str(err)}
+
+        # Switch to chat if not currently active
+        if not auto.verify_header_contact(phone):
+            try:
+                await asyncio.to_thread(auto.open_chat_by_number, phone)
+            except Exception as e:
+                return {"ok": False, "error": f"Failed to open chat for {to}: {e}"}
+
+        result = await asyncio.to_thread(auto.put_draft, text)
+        return {
+            "ok": True,
+            "recipient": phone,
+            "contact_name": SAVED_CONTACTS[phone]["name"],
+            **result
+        }
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
@@ -349,19 +470,29 @@ async def send_message(to: str, text: str, approval_token: str = "CONFIRMED") ->
     """Send approved message to open chat after explicit operator authorization.
 
     Args:
-        to: Approved contact phone number (+380981901991)
+        to: Approved contact phone number, name, or alias
         text: Exact expected text currently in composer
         approval_token: Confirmation marker from agent indicating operator permission was received (default: 'CONFIRMED')
     """
-    if to not in SAVED_CONTACTS:
-        return {"ok": False, "error": "Recipient not in approved address book"}
-    if not approval_token:
-        return {"ok": False, "error": "Explicit approval token required"}
-    verified = await asyncio.to_thread(auto.verify_header_contact, to)
-    if not verified:
-        return {"ok": False, "error": f"Active chat header could not be verified for {to}. Sending blocked."}
-    result = await asyncio.to_thread(auto.send, text)
-    return {"ok": True, **result}
+    async with _viber_lock:
+        try:
+            phone = resolve_phone(to)
+        except ValueError as err:
+            return {"ok": False, "error": str(err)}
+
+        if not approval_token:
+            return {"ok": False, "error": "Explicit approval token required"}
+
+        if not auto.verify_header_contact(phone):
+            return {"ok": False, "error": f"Active chat header is not verified as {phone} ({SAVED_CONTACTS[phone]['name']}). Sending blocked."}
+
+        result = await asyncio.to_thread(auto.send, text)
+        return {
+            "ok": True,
+            "recipient": phone,
+            "contact_name": SAVED_CONTACTS[phone]["name"],
+            **result
+        }
 
 
 if __name__ == "__main__":
