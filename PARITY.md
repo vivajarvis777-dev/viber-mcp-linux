@@ -44,7 +44,7 @@ Input/send у поточному VPS profile вимкнені. Правила ap
 1. **Unit/domain fixture:** усі 11 шляхів, включно з notes/send, працюють проти явно синтетичного backend; це не Viber.
 2. **Справжній MCP stdio:** initialize, tools/list, усі 11 tools/call у безпечному disabled режимі; health/list_contacts/stop success; desktop/send paths fail closed.
 3. **Справжній AT-SPI + GTK:** ізольовані Xvfb/D-Bus, реальний accessibility IPC, text read/write, exact search, local button action, scoped reads. Синтетична кнопка не відправляє повідомлення.
-4. **Viber Desktop E2E:** **НЕ перевірено для всіх GUI-шляхів**. Дозволене read-only discovery 2026-10-18 знайшло конкретний blocker: немає Viber/XFCE процесів, X11 socket і accessibility bus socket; історична сесія hannelora `closing`. Дерево реального Viber недоступне. Не читали приватні чати, не вводили GUI, не відкривали інші чати. Немає погодженого тексту для реального `0981901991`.
+4. **Viber Desktop E2E:** **НЕ перевірено для всіх GUI-шляхів**. Дозволене read-only discovery 2026-10-18 знайшло конкретний blocker: немає Viber/XFCE процесів, X11 socket і accessibility bus socket; історична сесія hannelora `closing`. Дерево реального Viber недоступне. Не читали приватні чати, не вводили GUI, не відкривали інші чати. Немає погодженого тексту для реального `2025550123`.
 
 ## Межі, які не можна приховувати
 
@@ -59,4 +59,4 @@ Input/send у поточному VPS profile вимкнені. Правила ap
 
 Оновлення 2026-10-18: desktop уже відновлений; цю стару вимогу виконано. Нові blockers: stale AT-SPI socket, відмінна міжнародна форма номера у header, повідомлена Господарем offline-проблема. GUI-проби призупинені на час ручного тесту. Реальний X11 header capture та локальний OCR перевірені; `x11_probe.py` лише діагностика без authorization/write/send і без інтеграції у domain backend. Clipboard fallback та повний operational parity залишаються відкритими.
 
-Історичний наступний крок — Господар відновлює власну desktop-сесію/Viber або окремо погоджує конкретне відновлення. Потім повторити вузьке read-only discovery без читання приватного тексту та відкалібрувати profile за реальними доказами. Лише literal `0981901991`; надсилання тільки після погодження точного тексту. Не тестувати My Notes наживо. OCR/clipboard fallback не додавали без доступного реального UI: історична нотатка про clipboard не доводить безпечної інтеграції чи готовності поточного backend.
+Історичний наступний крок — Господар відновлює власну desktop-сесію/Viber або окремо погоджує конкретне відновлення. Потім повторити вузьке read-only discovery без читання приватного тексту та відкалібрувати profile за реальними доказами. Лише literal `2025550123`; надсилання тільки після погодження точного тексту. Не тестувати My Notes наживо. OCR/clipboard fallback не додавали без доступного реального UI: історична нотатка про clipboard не доводить безпечної інтеграції чи готовності поточного backend.

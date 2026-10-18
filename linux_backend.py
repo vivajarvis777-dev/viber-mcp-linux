@@ -97,6 +97,10 @@ class X11Backend(LinuxBackend):
     worker_name = 'x11_worker.py'
     stable_message_ids = False
 
+    def __init__(self, profile=None, timeout=15):
+        # One guarded operation can include URI dispatch, clipboard exchange and OCR.
+        super().__init__(profile=profile, timeout=timeout)
+
     def abort(self, process):
         # Let the worker restore its clipboard on cancellation/timeout.
         process.terminate()

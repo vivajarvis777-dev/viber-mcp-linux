@@ -29,11 +29,11 @@ async def smoke(state):
             assert not health.isError
             contacts=await session.call_tool('list_contacts',{})
             assert not contacts.isError
-            blocked=await session.call_tool('send_message',{'to':'0981901991','text':'SYNTHETIC PROTOCOL TEST — NOT SENT'})
+            blocked=await session.call_tool('send_message',{'to':'2025550123','text':'SYNTHETIC PROTOCOL TEST — NOT SENT'})
             assert blocked.isError
             disabled_calls = {
-                'open_chat':{'to':'0981901991'}, 'open_and_read':{'to':'0981901991'},
-                'reply':{'text':'SYNTHETIC'}, 'search_and_open':{'name':'0981901991'},
+                'open_chat':{'to':'2025550123'}, 'open_and_read':{'to':'2025550123'},
+                'reply':{'text':'SYNTHETIC'}, 'search_and_open':{'name':'2025550123'},
                 'list_chats':{}, 'put_draft':{'text':'SYNTHETIC'},
                 'save_to_my_notes':{'text':'SYNTHETIC'}, 'open_my_notes':{}, 'read_open_chat':{},
                 'read_visible':{'region':'conversation'}}

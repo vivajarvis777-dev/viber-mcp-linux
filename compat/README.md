@@ -1,7 +1,7 @@
 # Hermes та MCP SDK v2: read-only annotations
 
-Перевірено на встановленому VPS runtime 2026-10-18. Це **підготовлений patch**,
-не зміна production Hermes і не дозвіл обходити approval.
+Перевірено на встановленому VPS runtime 2026-10-18. Patch **застосовано за прямим погодженням** до runtime Хенелори,
+зі збереженням приватної резервної копії. Approval не обходиться.
 
 `tools/mcp_tool_registration.py::_annotation_read_only_hint` читає тільки
 `annotations.readOnlyHint`. У встановленому SDK v2 Python-властивість має назву
@@ -19,13 +19,14 @@ read-only tools потрапляють до Hermes як write-capable.
 `hermes-sdk2-readonly.patch` приймає обидві підтримувані форми, але тільки
 literal `True`. Missing, `False`, `None`, числа/рядки й конфлікт двох форм
 залишають tool write-capable. 15 окремих regression cases проходять; функцію
-також перевірено з фактичним SDK v2 VPS, без патчу production і без tool dispatch.
+також перевірено з фактичним SDK v2 VPS. Після погодженого застосування actual
+Hermes registry dispatch виконав health та read_visible з trust:untrusted.
 
 Patch створено для baseline SHA256 модуля:
 `10a33536058523140beb8b6e224ef88c30925bea1d4807f7a822096c736b9117`.
 `git apply --check` пройшов на копії фактичного модуля.
 
-Після окремого погодження: зберегти приватну резервну копію модуля, повторно
+Для наступного розгортання після окремого погодження: зберегти приватну резервну копію модуля, повторно
 перевірити baseline, застосувати patch, виконати isolated `scripts/hermes_smoke.py`
 із `trust:untrusted`, а вже потім погоджений перезапуск потрібного Hermes runtime.
 Не замінювати `trust` на `full` для приховування цього результату. Код
@@ -46,3 +47,10 @@ Runtime/selected dependency paths потрібно визначати живою
 `health` та `read_visible`; input/send примусово вимкнені. Без `--inspect-only`
 перевіряється справжній Hermes registry dispatch; `--read-status` додатково
 перевіряє live read після калібрування та активації Viber.
+
+Поточне розгортання: patched SHA256 модуля
+`01c79a0eb4dfc8eac6a08fce5e428b70a99044ed9385abaafa0ae5dcf2b37028`.
+Production включає лише health/read_visible/list_chats/list_contacts; input/send=0.
+Перезапущено hermes-hannelora.service, dashboard не перезапускався. Перевірка
+виконана окремим процесом фактичного runtime/config, без виклику моделі; це
+не доказ model-driven виклику всередині gateway.

@@ -330,3 +330,82 @@ cleanly to a copy of the installed module. See compat/README.md.
 Also moved the X11 send preflight ahead of navigation/drafting. An offline or
 uncalibrated attempt now returns blocked before any clipboard/UI write; the
 worker rechecks immediately before clicking. 106 tests pass after this change.
+
+## Activated read-only deployment and bounded input investigation — 2026-10-18
+
+This section supersedes earlier pending-activation/deployment statements above.
+The owner confirmed QR activation and explicitly authorized the SDK2 runtime
+patch, read-only configuration, gateway restart, then AT-SPI/Viber restart.
+
+### Verified operational state
+
+- Backed up runtime module and complete private config before changing either.
+  SDK2 patched module SHA256:
+  `01c79a0eb4dfc8eac6a08fce5e428b70a99044ed9385abaafa0ae5dcf2b37028`.
+  Unrelated config values were semantically preserved.
+- Hermes includes only health/read_visible/list_chats/list_contacts, with
+  trust=untrusted, parallel calls disabled, INPUT=0 and SEND=0. Actual installed
+  Hermes registry successfully called health/read_visible after the patch.
+  This was an isolated process using the real runtime/config, not an LLM turn
+  or proof of discovery inside the gateway process.
+- Latest service checks: hermes-hannelora.service PID3151056 active/running;
+  Viber PID3182753 active/running; user at-spi-dbus-bus.service PID3175755
+  active/running. Hermes dashboard was not restarted.
+- AT-SPI's old socket was stale. After the approved restart GetAddress returned
+  a connectable display-specific socket. Do not hardcode the old socket path.
+  Viber exposes Text but not EditableText for its composer. The new bounded
+  helper validates PID/frame/geometry/visible point before reading only that
+  element; static Atspi.Text.get_text avoids GI method shadowing.
+- The VPS network is managed by networkd while NetworkManager reports
+  disconnected for unmanaged interfaces. Qt's bundled networkmanager backend
+  therefore reported offline. Moving only Viber's networkmanager plugin into a
+  private rollback folder and selecting GLib's netlink monitor removed the
+  offline banner. Process maps confirmed libqglib; no host network changes.
+  See docs/VPS-TROUBLESHOOTING.md. This does not establish message delivery.
+- Latest read-only MCP status calls: 1094/997/973 ms, median997 ms, one line each,
+  no offline marker in that region, no private text printed. Native composer
+  read confirmed length0. These timings exclude model/provider latency.
+
+### What remains unverified
+
+- Exact test-contact identity was obtained through Copy number and native URI
+  navigation passed once (~3742 ms). That is not evidence of reliable input.
+- Later guarded drafting failed intermittently with ui_command_failed. Failures
+  include xdotool getwindowpid/getactivewindow and a composer mouse command.
+  strace localized one read query to XOpenDisplay's initial socket reply wait;
+  the three-second timeout happened before its window-property query.
+- Isolated CLIPBOARD and PRIMARY ownership probes returned a new X connection
+  in 14/8 ms; twelve plain active-window queries also passed. Neither proves
+  a root cause for the intermittent Viber sequence. PRIMARY paste and an added
+  click delay did not produce a verified draft and were removed from the patch.
+- Native draft read was still empty after failed input. No test send was invoked;
+  the actual MCP approval ledger contained zero rows. No human token was issued.
+- The owner approved an isolated Remmina clipboard-sync test. A private profile
+  backup was created; only disableclipboard changed 0→1 on disk. A new connection
+  prompted for a password, so that prompt and pending close were cancelled and
+  the established session was preserved. No credentials were read or injected.
+  The new setting has NOT been demonstrated in the active RDP connection.
+- Need manual RDP authentication before one draft-only test. Production remains
+  pinned to the verified read-only release. Do not infer a successful reconnect
+  from a file setting or remmina command exit code.
+
+### Current code validation
+
+- 125 unit/regression tests passed in10.16s (Python3.12). Includes failed focus,
+  clipboard and UI command at Service send level: blocked, attempted=false,
+  sends=0, and same-token replay still sends0; plus exact scoped AT-SPI reads,
+  hidden/ambiguous/wrong-PID rejection and changed send-button pixels.
+- New 36×36 send-button template guard prevents clicking a reflowed toolbar or
+  microphone. No live send template is calibrated. Synthetic fixtures can
+  exercise the button independently of any real account.
+- Synthetic test identifiers were replaced with fictional NANP555 numbers.
+  Historical Git commits may still contain the previously used test identifier;
+  history was not rewritten.
+- Latest production code remains at52e7ef2 until later explicit deployment of
+  the input work. New GitHub CI must be checked against the new PR head.
+
+Final independent checks of this working tree: `git diff --check` clean; actual
+MCP stdio protocol2025-11-25, all14 tools, disabled-send/stop checks passed.
+On the VPS an isolated Xvfb/GTK display passed OCR identity, exact Ukrainian/emoji/
+newline clipboard readback, clipboard restoration, scoped reads and one synthetic
+button callback. It did not interact with Viber or send network messages.

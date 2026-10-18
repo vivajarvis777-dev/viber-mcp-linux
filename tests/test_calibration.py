@@ -60,10 +60,10 @@ class Image:
         stream.write(b'synthetic image')
 
 
-@pytest.mark.parametrize('text,match,international', [('0981901991', True, False), ('+380981901991', False, True), ('098 190 1991', False, False), ('0981901991\n0981901991', False, False), ('no phone', False, False)])
+@pytest.mark.parametrize('text,match,international', [('2025550123', True, False), ('+12025550123', False, True), ('202 555 0123', False, False), ('2025550123\n2025550123', False, False), ('no phone', False, False)])
 def test_ocr_never_authorizes_or_normalizes(monkeypatch, text, match, international):
     monkeypatch.setattr(probe, 'command', lambda *a, **k: text.encode())
-    result = probe.phone_summary(Image(), '0981901991')
+    result = probe.phone_summary(Image(), '2025550123')
     assert result['literal_match_observed'] is match
     assert result['international_form_observed'] is international
     assert result['recipient_verified'] is False
@@ -81,7 +81,7 @@ def test_disabled_and_missing_bus(monkeypatch):
 
 def test_invalid_literal():
     with pytest.raises(probe.ProbeError, match='invalid_literal'):
-        probe.phone_summary(Image(), '0981901991 ')
+        probe.phone_summary(Image(), '2025550123 ')
 
 
 def test_command_failure_sanitized():

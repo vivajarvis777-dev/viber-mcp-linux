@@ -1,5 +1,7 @@
 """Synthetic GTK fixture and real X11/OCR test in a private Xvfb; never Viber."""
 import ctypes
+import base64
+import io
 import json
 import os
 from pathlib import Path
@@ -134,6 +136,14 @@ def main():
             assert 'conversation only' in backend.read('conversation')['text']
             assert 'sidebar only' in backend.read('sidebar')['text']
             assert backend.messages() == []
+            # Calibrate only the synthetic Send button after a verified draft is present.
+            profile = json.loads(path.read_text())
+            profile['regions']['send_button'] = [722, 472, 36, 36]
+            desktop = Desktop(profile)
+            image = desktop.capture('send_button')
+            encoded = io.BytesIO(); image.save(encoded, format='PNG')
+            profile['send_button_template'] = base64.b64encode(encoded.getvalue()).decode()
+            path.write_text(json.dumps(profile))
             # One local synthetic button callback. No Viber process/network in this display.
             backend.send('+12025550123', value)
             assert backend.draft() == ''

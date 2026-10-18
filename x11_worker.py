@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import csv
+import base64
+import ctypes
 import io
 import json
 import os
@@ -34,6 +36,31 @@ def command(args, data=None, timeout=3):
 def normalized(text):
     """Whitespace/case only, never discard Cyrillic or punctuation."""
     return ' '.join(text.split()).casefold()
+
+
+def selection_owner(clear=False):
+    """Distinguish an empty selection from a failing clipboard provider."""
+    xlib = ctypes.CDLL('libX11.so.6')
+    xlib.XOpenDisplay.restype = ctypes.c_void_p
+    display = xlib.XOpenDisplay(None)
+    if not display:
+        raise SafetyError('clipboard_failed')
+    xlib.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    try:
+        xlib.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+        xlib.XInternAtom.restype = ctypes.c_ulong
+        atom = xlib.XInternAtom(display, b'CLIPBOARD', 0)
+        xlib.XGetSelectionOwner.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        xlib.XGetSelectionOwner.restype = ctypes.c_ulong
+        owner = xlib.XGetSelectionOwner(display, atom)
+        if clear:
+            xlib.XSetSelectionOwner.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+            xlib.XSetSelectionOwner(display, atom, 0, 0)
+            xlib.XFlush.argtypes = [ctypes.c_void_p]
+            xlib.XFlush(display)
+        return owner
+    finally:
+        xlib.XCloseDisplay(display)
 
 
 def window_geometry(window_id):
@@ -114,6 +141,9 @@ class Desktop:
         proc = Path('/proc') / pid
         if proc.stat().st_uid != os.getuid() or (proc / 'comm').read_text().strip() != 'Viber':
             raise SafetyError('unexpected_window_owner')
+        if getattr(self, 'pid', pid) != pid:
+            raise SafetyError('unexpected_window_owner')
+        self.pid = pid
         return window_geometry(self.wid)
 
     def guard(self, input_action=False):
@@ -172,22 +202,56 @@ class Desktop:
                 'recipient_verified': False, 'send_authorized': False}
 
     def identity(self):
+        if self.profile.get('identity_mode') == 'clipboard_menu':
+            return self.clipboard_identity()
         # A name, placeholder, sidebar hit or guessed country code is never identity.
         return observed_phone(self.ocr('identity'))
+
+    def clipboard_identity(self):
+        """Copy number from the current contact's calibrated header menu, then restore clipboard."""
+        number = None
+        try:
+            with self.clipboard():
+                sentinel = ('viber-identity-' + uuid.uuid4().hex).encode()
+                self.clipboard_set(sentinel)
+                self.click(self.point('identity_menu'), button=3)
+                time.sleep(.12)
+                self.click(self.point('copy_number'))
+                deadline = time.monotonic() + .6
+                while time.monotonic() < deadline:
+                    value = self.clipboard_get()
+                    if value != sentinel:
+                        candidate = re.sub(r'[\s()-]', '', value.decode('utf-8'))
+                        if re.fullmatch(r'(?:\+[1-9][0-9]{7,14}|[0-9]{8,15})', candidate):
+                            number = candidate
+                            break
+                        raise SafetyError('identity_not_visible')
+                    time.sleep(.03)
+                if number is None:
+                    raise SafetyError('identity_not_visible')
+        finally:
+            # Restore selection ownership before further X11 round trips. A successful
+            # Copy number closes its menu itself; only failures require cancellation.
+            if number is None:
+                self.key('Escape')
+        self.guard()
+        return number
 
     def verify(self, recipient):
         if self.identity() != recipient:
             raise SafetyError('recipient_changed')
 
-    def click(self, point):
+    def click(self, point, button=1):
         self.guard(input_action=True)
+        if button not in (1, 3):
+            raise SafetyError('profile_invalid')
         if (not isinstance(point, list) or len(point) != 2 or
                 any(type(v) is not int for v in point) or
                 not (0 <= point[0] < self.geometry[2] and 0 <= point[1] < self.geometry[3])):
             raise SafetyError('profile_invalid')
         # One click, no held pointer state, no global keyboard typing.
         command(['xdotool', 'mousemove', str(self.geometry[0] + point[0]),
-                 str(self.geometry[1] + point[1]), 'click', '1'])
+                 str(self.geometry[1] + point[1]), 'click', str(button)])
         self.guard()
 
     def point(self, name):
@@ -195,34 +259,55 @@ class Desktop:
 
     def key(self, key):
         self.guard(input_action=True)
-        if key not in ('ctrl+a', 'ctrl+c', 'ctrl+v', 'BackSpace', 'Right'):
+        if key not in ('ctrl+a', 'ctrl+c', 'ctrl+v', 'BackSpace', 'Right', 'Escape'):
             raise SafetyError('profile_invalid')
         command(['xdotool', 'key', '--clearmodifiers', key])
         self.guard()
 
     @staticmethod
     def clipboard_get():
+        if os.getenv('VIBER_XSEL'):
+            try:
+                return subprocess.run([os.environ['VIBER_XSEL'], '--clipboard', '--output'],
+                                      capture_output=True, timeout=3, check=True,
+                                      env={**os.environ, 'LC_ALL': 'C.UTF-8'}).stdout
+            except (OSError, subprocess.SubprocessError):
+                raise SafetyError('clipboard_failed') from None
         return command(['xclip', '-selection', 'clipboard', '-o', '-target', 'UTF8_STRING'])
 
     @staticmethod
     def clipboard_set(data):
         # xclip owns selection in its normal background child. No pipe inheritance.
         try:
-            subprocess.run(['xclip', '-selection', 'clipboard', '-i', '-target', 'UTF8_STRING'],
+            args = ([os.environ['VIBER_XSEL'], '--clipboard', '--input'] if os.getenv('VIBER_XSEL')
+                    else ['xclip', '-selection', 'clipboard', '-i', '-target', 'UTF8_STRING'])
+            subprocess.run(args,
                            input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=2, check=True)
+                           timeout=2, check=True, env={**os.environ, 'LC_ALL': 'C.UTF-8'})
         except (OSError, subprocess.SubprocessError):
             raise SafetyError('clipboard_failed') from None
+
+    clipboard_owner = staticmethod(selection_owner)
+
+    @staticmethod
+    def clipboard_clear():
+        selection_owner(clear=True)
 
     @contextmanager
     def clipboard(self):
         self.guard(input_action=True)
+        if self.clipboard_owner() == 0:
+            try:
+                yield
+            finally:
+                self.clipboard_clear()
+            return
         try:
             targets = command(['xclip', '-selection', 'clipboard', '-o', '-target', 'TARGETS']).decode().split()
         except SafetyError:
             # Absence and inaccessible clipboard cannot be distinguished safely.
             raise SafetyError('clipboard_unsupported') from None
-        allowed = {'TARGETS', 'MULTIPLE', 'TIMESTAMP', 'SAVE_TARGETS', 'UTF8_STRING',
+        allowed = {'TARGETS', 'MULTIPLE', 'TIMESTAMP', 'SAVE_TARGETS', 'UTF8_STRING', 'DELETE', 'INCR',
                    'STRING', 'TEXT', 'COMPOUND_TEXT', 'text/plain', 'text/plain;charset=utf-8'}
         if 'UTF8_STRING' not in targets or set(targets) - allowed:
             raise SafetyError('clipboard_unsupported')
@@ -251,6 +336,8 @@ class Desktop:
         raise SafetyError('draft_unreadable')
 
     def draft(self):
+        if self.profile.get('atspi_composer') is True:
+            return self.read_composer_atspi()
         lines = self.ocr('composer')
         placeholders = {normalized(x) for x in self.profile.get('empty_composer_labels', [])}
         # Empty OCR is not proof of an empty draft. Require visible placeholder.
@@ -258,6 +345,24 @@ class Desktop:
                            and lines[0]['confidence'] >= 75)
         with self.clipboard():
             return self.copy_field('composer', allow_empty=empty_candidate)
+
+    def read_composer_atspi(self):
+        self.guard()
+        point = self.point('composer')
+        request = {'application': self.profile.get('atspi_application', 'ViberPC'),
+                   'window': self.profile.get('atspi_window', 'Rakuten Viber'),
+                   'pid': int(self.pid), 'geometry': list(self.geometry),
+                   'point': [self.geometry[0] + point[0], self.geometry[1] + point[1]]}
+        args = [os.getenv('VIBER_ACCESSIBILITY_PYTHON', '/usr/bin/python3'),
+                str(Path(__file__).with_name('atspi_text_reader.py'))]
+        try:
+            result = json.loads(command(args, json.dumps(request).encode(), timeout=6))
+        except (ValueError, TypeError):
+            raise SafetyError('text_interface_missing') from None
+        self.guard()
+        if not isinstance(result.get('text'), str):
+            raise SafetyError('text_interface_missing')
+        return result['text']
 
     def write(self, text, recipient):
         self.verify(recipient)
@@ -267,19 +372,31 @@ class Desktop:
         if old:
             raise SafetyError('draft_protected')
         with self.clipboard():
-            self.verify(recipient)
-            self.clipboard_set(text.encode('utf-8'))
             self.click(self.point('composer'))
+            self.clipboard_set(text.encode('utf-8'))
             self.key('ctrl+v')
+            # Qt fetches CLIPBOARD asynchronously. Keep the paste payload owned
+            # until that event is consumed before copy_field installs its sentinel.
+            time.sleep(.25)
             # This checks all Unicode/newlines, not an ASCII-only OCR signature.
-            if self.copy_field('composer') != text:
+            if self.profile.get('atspi_composer') is True:
+                deadline = time.monotonic() + 3
+                actual = self.read_composer_atspi()
+                while actual == '' and time.monotonic() < deadline:
+                    time.sleep(.05)
+                    actual = self.read_composer_atspi()
+            else:
+                actual = self.copy_field('composer')
+            if actual != text:
                 raise SafetyError('unicode_readback_mismatch')
-            self.verify(recipient)
+        self.verify(recipient)
         return {'drafted': True}
 
     def navigate(self, query):
         if not isinstance(query, str) or not query.strip() or len(query) > 200 or '\x00' in query:
             raise SafetyError('search_missing_or_ambiguous')
+        if self.profile.get('viber_launcher') and re.fullmatch(r'\+[1-9][0-9]{7,14}', query):
+            return self.navigate_phone(query)
         # Search labels are explicit calibration, never guess compose field coordinates.
         current = self.ocr('search')
         labels = {normalized(x) for x in self.profile.get('empty_search_labels', [])}
@@ -311,6 +428,56 @@ class Desktop:
                     self.key('ctrl+a')
                     self.key('BackSpace')
 
+    def navigate_phone(self, number):
+        from urllib.parse import quote
+        self.guard(input_action=True)
+        launcher = Path(self.profile['viber_launcher'])
+        if not launcher.is_absolute() or not launcher.is_file() or not os.access(launcher, os.X_OK):
+            raise SafetyError('profile_invalid')
+        # Explicitly local handler, never xdg-open/default-browser or a shell.
+        try:
+            # Qt helpers may inherit a captured stdout pipe after the launcher exits.
+            # This handoff has no stdout contract; never wait for those pipes to close.
+            subprocess.run([str(launcher), 'viber://chat?number=' + quote(number, safe='')],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=3, check=True)
+        except (OSError, subprocess.SubprocessError):
+            raise SafetyError('navigation_command_failed') from None
+        # URI handoff returns before Qt has processed its queued navigation event.
+        # Settling is never evidence: the copied contact number still must match.
+        time.sleep(.3)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            try:
+                if self.identity() == number:
+                    return {'matched': number, 'recipient_verified': True, 'navigation': 'viber_uri'}
+            except SafetyError as error:
+                if str(error) not in ('identity_not_visible', 'recipient_changed'):
+                    raise
+            time.sleep(.1)
+        raise SafetyError('recipient_changed')
+
+    def assert_send_button(self):
+        from PIL import Image, ImageChops, ImageStat
+        encoded = self.profile.get('send_button_template', '')
+        if not isinstance(encoded, str) or not 0 < len(encoded) <= 12000:
+            raise SafetyError('profile_invalid')
+        try:
+            template = Image.open(io.BytesIO(base64.b64decode(encoded, validate=True)))
+            if template.size != (36, 36) or template.format != 'PNG':
+                raise ValueError('invalid template')
+            template = template.convert('RGB')
+        except (ValueError, OSError):
+            raise SafetyError('profile_invalid') from None
+        rect = self.rect('send_button')
+        point = self.point('send')
+        if rect[2:] != [36, 36] or point != [rect[0] + 18, rect[1] + 18]:
+            raise SafetyError('profile_invalid')
+        current = self.capture('send_button').convert('RGB')
+        rms = ImageStat.Stat(ImageChops.difference(current, template)).rms
+        if max(rms) > 6:
+            raise SafetyError('send_button_changed')
+
     def preflight_send(self):
         self.guard(input_action=True)
         if os.getenv('VIBER_ENABLE_SEND') != '1':
@@ -321,6 +488,8 @@ class Desktop:
         if any(normalized(marker) in status for marker in self.profile.get('offline_labels',
                    ['No internet connection', 'Немає з’єднання', 'Нет подключения'])):
             raise SafetyError('offline')
+        if not self.profile.get('send_button_template'):
+            raise SafetyError('profile_invalid')
         return {'ready_for_guarded_attempt': True, 'delivered': None}
 
     def send(self, recipient, text):
@@ -329,6 +498,7 @@ class Desktop:
         if self.draft() != text:
             raise SafetyError('draft_changed')
         self.verify(recipient)
+        self.assert_send_button()
         self.click(self.point('send'))
         return {'attempted': True, 'sent': None, 'delivered': None}
 

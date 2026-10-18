@@ -38,3 +38,11 @@ GitHub: приватний vivajarvis777-dev/viber-mcp-linux уже існува
 у гілці codex/linux-ocr, не переписуємо main або наявний серверний checkout.
 Скіл anthropics/skills@mcp-builder встановлено у проєкт за прямою згодою.
 Офіційний .deb Viber завантажено з посилання на viber.com/en/download/.
+
+## Поточне розгортання й приймання
+
+VPS: Ubuntu24.04 (Debian family), X11 Хенелори. Production read-only MCP
+підключено за прямою згодою, разом із SDK2 patch; вхід Viber активовано QR.
+Останні докази й перешкоди: EVIDENCE.md, TASKS.md. Введення/надсилання не
+вважаються завершеними, поки немає exact draft та погодженого тесту доставки.
+Одночасний контролер desktop лише один; production input/send залишаються0.

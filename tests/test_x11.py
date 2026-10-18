@@ -11,12 +11,12 @@ def line(text, confidence=95):
 
 
 def test_exact_phone_no_country_guess():
-    assert observed_phone([line('+380 (98) 190-19-91')]) == '+380981901991'
-    assert observed_phone([line('0981901991')]) == '0981901991'
-    assert observed_phone([line('0981901991')]) != '+380981901991'
-    for lines in ([line('Юрій')], [line('+380981901991', 84)],
-                  [line('+380981901991'), line('+380111111111')],
-                  [line('Type a message')], [line('Call +380981901991')]):
+    assert observed_phone([line('+1 (202) 555-0123')]) == '+12025550123'
+    assert observed_phone([line('2025550123')]) == '2025550123'
+    assert observed_phone([line('2025550123')]) != '+12025550123'
+    for lines in ([line('Юрій')], [line('+12025550123', 84)],
+                  [line('+12025550123'), line('+12025550199')],
+                  [line('Type a message')], [line('Call +12025550123')]):
         with pytest.raises(SafetyError, match='identity_not_visible'):
             observed_phone(lines)
 
@@ -47,6 +47,7 @@ def test_clipboard_rejects_rich_data_without_mutation(monkeypatch):
     import x11_worker
     d = Desktop.__new__(Desktop)
     d.guard = lambda **kw: None
+    d.clipboard_owner = lambda: 1
     monkeypatch.setattr(x11_worker, 'command', lambda *a, **kw: b'TARGETS\nUTF8_STRING\ntext/html')
     d.clipboard_set = lambda *a: pytest.fail('mutated rich clipboard')
     with pytest.raises(SafetyError, match='clipboard_unsupported'):
@@ -58,6 +59,7 @@ def test_clipboard_restored_on_error(monkeypatch):
     import x11_worker
     d = Desktop.__new__(Desktop)
     d.guard = lambda **kw: None
+    d.clipboard_owner = lambda: 1
     monkeypatch.setattr(x11_worker, 'command', lambda *a, **kw: b'TARGETS\nUTF8_STRING')
     d.clipboard_get = lambda: 'попередній текст'.encode()
     restored = []
@@ -66,6 +68,19 @@ def test_clipboard_restored_on_error(monkeypatch):
         with d.clipboard():
             raise SafetyError('cancelled')
     assert restored == ['попередній текст'.encode()]
+
+
+def test_empty_clipboard_is_restored_without_inventing_content():
+    d = Desktop.__new__(Desktop)
+    d.guard = lambda **kw: None
+    d.clipboard_owner = lambda: 0
+    d.clipboard_get = lambda: pytest.fail('Requested data from an unowned selection')
+    cleared = []
+    d.clipboard_clear = lambda: cleared.append(True)
+    with pytest.raises(SafetyError):
+        with d.clipboard():
+            raise SafetyError('cancelled')
+    assert cleared == [True]
 
 
 def test_rect_and_geometry_validation():
@@ -89,15 +104,15 @@ def test_offline_never_clicks_send(monkeypatch):
     d.ocr = lambda region: [line('No internet connection')]
     d.click = lambda *a: pytest.fail('clicked send offline')
     with pytest.raises(SafetyError, match='offline'):
-        d.send('+380981901991', 'Привіт')
+        d.send('+12025550123', 'Привіт')
 
 
 def test_changed_recipient_never_pastes():
     d = Desktop.__new__(Desktop)
-    d.identity = lambda: '+380111111111'
+    d.identity = lambda: '+12025550199'
     d.click = lambda *a: pytest.fail('clicked on wrong recipient')
     with pytest.raises(SafetyError, match='recipient_changed'):
-        d.write('test', '+380981901991')
+        d.write('test', '+12025550123')
 
 
 def test_backend_selection_explicit(monkeypatch):
@@ -153,3 +168,34 @@ def test_failed_preflight_never_navigates_or_changes_draft(tmp_path):
     assert result['reason'] == 'offline'
     assert backend.calls == [] and backend.sends == 0
     assert backend.value == 'Existing user draft'
+
+
+@pytest.mark.parametrize('failure', ['window_not_foreground', 'clipboard_failed', 'ui_command_failed'])
+def test_failed_draft_guard_blocks_service_send_and_replay(tmp_path, failure):
+    from tests.test_domain import NUMBER, TEXT
+    backend = Fake()
+    def fail_write(text, recipient):
+        raise SafetyError(failure)
+    backend.write = fail_write
+    service = Service(backend, tmp_path / 'state', send_enabled=True)
+    token = service.store().approve(NUMBER, TEXT)
+    result = service.send_message(NUMBER, TEXT, approval_token=token)
+    assert result['status'] == 'blocked' and result['attempted'] is False
+    assert result['reason'] == failure
+    assert backend.sends == 0 and backend.value == ''
+    replay = service.send_message(NUMBER, TEXT, approval_token=token)
+    assert replay['replayed'] is True and backend.sends == 0
+
+
+def test_background_window_rejected_before_pid_or_input(monkeypatch):
+    import x11_worker
+    d = Desktop.__new__(Desktop)
+    d.wid = '123'
+    calls = []
+    def query(args, *a, **kw):
+        calls.append(args)
+        return b'456'
+    monkeypatch.setattr(x11_worker, 'command', query)
+    with pytest.raises(SafetyError, match='window_not_foreground'):
+        d.state()
+    assert calls == [['xdotool', 'getactivewindow']]
