@@ -1,3 +1,26 @@
+# Актуальний стан v0.3, 2026-10-18
+
+14 інструментів: 11 назв upstream плюс `health`, `stop`, `read_visible`.
+X11/OCR backend тепер реалізований; старі твердження «OCR відсутній» нижче —
+історичний стан до цієї зміни. Порт не став повністю operational для всіх чатів.
+
+| Можливість | AT-SPI | X11/OCR | Живий Viber |
+|---|---|---|---|
+| Scoped читання | Реалізовано | Реалізовано | Статус перевірено через MCP |
+| Точна ідентичність | Accessible phone | Точна OCR phone-line ≥85 confidence | Не відкалібровано для write |
+| Unicode draft | EditableText | Plaintext clipboard + exact readback | Тільки синтетичний GUI тест |
+| Пошук | Unique exact accessible result | Unique exact OCR result | Не перевірено наживо |
+| Погоджений send | Stable outgoing ID → sent | Один клік → unknown, stable ID немає | Не виконувався |
+| My Notes | Потрібен незалежний self-marker | Блокується | Не перевірено |
+| stop | Worker kill | SIGTERM + час на clipboard cleanup | Протокол/синтетика |
+
+Немає гарантії доставки; відсутність OCR offline-маркера не доводить online.
+Input/send у поточному VPS profile вимкнені. Правила approval/replay збережені.
+
+---
+
+## Історичний baseline
+
 # Повна матриця інструментів upstream
 
 Джерело: `wawimundo/viber-mcp`, commit `af1d0ed1b880dc28a18f2d5198a4d09b52047bd4`, `server.py` (копія `upstream_server.py`). MCP names: **11/11**; додані `health`, `stop`. Це паритет поверхні API та реалізованих шляхів, **не доказ повного operational parity на живому Viber**.

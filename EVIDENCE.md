@@ -226,3 +226,70 @@ Starting revision: `68e7431eb9bc79a47270a93691b95cefea42af98`;
 - Updating inherited `CLAUDE.md` was explicitly denied by the protected
   instruction-file write guard. No bypass or second write attempted; it remains
   inaccurate. README now points to current Linux status and this exact blocker.
+
+## X11/OCR continuation and official package replacement — 2026-10-18
+
+Base: `da06874c901521845575dd7c7eabc9524c5771ac`; working branch `codex/linux-ocr`.
+The GitHub repository already existed and was confirmed private. No main rewrite.
+
+### Implemented
+
+- Added explicit X11 backend, local Tesseract TSV parsing, bounded region reads,
+  strict phone observations, calibrated exact search, Unicode clipboard readback,
+  guarded one-shot send path. No stable message IDs are invented: an X11 send
+  remains unknown and cannot replay the same approval token.
+- Added `read_visible`, annotations and async thread offload. FastMCP 1.x invokes
+  synchronous functions inline, so the old tool wrappers prevented concurrent stop.
+- Fixed startup from unrelated/inaccessible cwd: FastMCP dotenv initialization
+  previously failed with `PermissionError: '.env'` when sudo inherited `/home/codex`.
+- Live official Viber uses WM_CLASS ViberPC; AppImage discovery had used Viber.
+  Exact matching now handles both while retaining process owner/name validation.
+- XFCE demonstrated xdotool geometry double-counting the frame: 464,123 versus
+  xwininfo absolute client 459,94, both 950×780. Capture and mouse positions now
+  use absolute client geometry from xwininfo; regression test covers this case.
+
+### Verification
+
+- Local Python 3.12: **90 tests passed**, 9.34 seconds, before final documentation changes.
+- True MCP stdio: protocol 2025-11-25, 14 tools, upstream names 11/11, health,
+  empty contacts, stop and disabled-send behavior passed.
+- On the Ubuntu 24.04 VPS, isolated Xvfb + synthetic GTK: actual X11 owner/window
+  checks, Tesseract identity, Cyrillic/emoji/newline clipboard readback, preserved
+  clipboard, scoped reads and one local synthetic button callback all passed.
+  No actual Viber message was sent by this fixture.
+- Live official Viber, **read-only MCP** (no screenshots/private text in report):
+  status region: 3 calls, one line each, **867/997/891 ms**, median **891 ms**;
+  sidebar: 3 calls, 22 lines each, **2012/2048/1764 ms**, median **2012 ms**.
+  These are end-to-end tool-call timings in a warm MCP session, not full LLM turn
+  latency and not a controlled comparison with upstream/macOS.
+- Status OCR explicitly observed `No internet connection`. Sidebar's lack of this
+  marker is NOT evidence of online status: it deliberately excludes the status area.
+- No real search/draft/send/recipient verification, history pagination, or message
+  delivery has been demonstrated. No production Hermes config/restart was performed.
+
+### Official Viber replacement requested by Господар
+
+Source: official https://www.viber.com/en/download/ → Ubuntu download,
+https://download.cdn.viber.com/cdn/desktop/Linux/viber.deb .
+Version **27.3.0.2 amd64**; downloaded file SHA256:
+`961534dc0cb920006ec7ae8108b0e1ba09a476eef1e13b4b370a79cd52dd20f3`.
+This records the downloaded bytes; it is not an independently published vendor signature.
+
+The vendor preinst touches multiple users' profile ownership and Qt temporary files.
+Used user-scoped extraction of official files instead of executing those scripts.
+No dpkg registration or global package removal was performed. New executable:
+`~/.local/opt/viber-deb-27.3.0.2/Viber`; live `/proc/<pid>/exe` matched it.
+Both menu/desktop launchers point at the new wrapper. Original profile remained in
+place; backup is private (profile.tar mode 0600, parent 0700). Old AppImage moved
+into the private rollback directory, no longer used by launchers.
+
+Old AppImage ignored SIGTERM. Its attempted ExitViber invocation created a second
+instance instead of closing it; both exact owned executables were verified and
+terminated before profile backup. No other user's processes were changed.
+First new startup failed with Qt xcb plugin dependencies; missing libraries were
+obtained from the configured Ubuntu apt repository and unpacked under this Viber's
+private deps directory. Subsequent launch has a real visible Viber window.
+
+Reinstallation **did not fix offline status**. Existing Viber TCP 443 connection
+and absence of proxy environment variables do not prove working messaging.
+Do not reset/deactivate the retained account or send a test without separate approval.

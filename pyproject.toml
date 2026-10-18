@@ -1,11 +1,12 @@
 [project]
 name = "viber-mcp-linux"
-version = "0.2.0"
-description = "Fail-closed Linux AT-SPI Viber MCP; desktop acceptance pending"
+version = "0.3.0"
+description = "Linux Viber MCP for Hermes with AT-SPI and local X11 OCR"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.28.1,<2",
+    "Pillow>=10.4,<13",
     # macOS backend only — Windows/Linux backends will add their own platform-gated deps.
     "pyobjc-framework-cocoa>=12.2.1 ; sys_platform == 'darwin'",
     "pyobjc-framework-quartz>=12.2.1 ; sys_platform == 'darwin'",

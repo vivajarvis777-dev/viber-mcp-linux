@@ -1,0 +1,22 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  debian:
+    runs-on: ubuntu-latest
+    container: python:3.11-bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install locked dependencies
+        run: apt-get update && apt-get install -y desktop-file-utils && pip install uv && uv sync --frozen --python /usr/local/bin/python
+      - name: Unit and protocol tests
+        run: .venv/bin/pytest -q && .venv/bin/python tests/protocol_smoke.py
+  x11:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Isolated desktop test dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3-gi gir1.2-gtk-3.0 python3-pil x11-utils xdotool xclip tesseract-ocr tesseract-ocr-eng tesseract-ocr-ukr tesseract-ocr-rus
+      - name: Real X11 fixture, no Viber account
+        run: python3 tests/synthetic_x11.py

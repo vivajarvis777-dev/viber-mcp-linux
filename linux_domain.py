@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from linux_backend import LinuxBackend, SafetyError
+from linux_backend import configured_backend, SafetyError
 from linux_errors import reason_code
 
 
@@ -75,7 +75,7 @@ class Service:
         self.verification_timeout = verification_timeout
         self.poll_interval = poll_interval
         self.cancelled = threading.Event()
-        self.backend = backend or LinuxBackend()
+        self.backend = backend or configured_backend()
         self.root = Path(state or os.getenv('VIBER_STATE_DIR', str(Path.home()/'.local/state/viber-mcp-linux')))
         self.contacts_path = contacts or os.getenv('VIBER_CONTACTS_FILE')
         self.send_enabled = os.getenv('VIBER_ENABLE_SEND') == '1' if send_enabled is None else send_enabled
@@ -157,6 +157,12 @@ class Service:
             return {**result, 'recipient': recipient}
     def list_chats(self):
         with self.transaction(): return self.backend.read('sidebar')
+    def read_visible(self, region='conversation'):
+        if region not in ('conversation', 'sidebar', 'header', 'status'):
+            raise SafetyError('Invalid visible region')
+        with self.transaction():
+            result = self.backend.read(region)
+            return {**result, 'recipient_verified': False, 'send_authorized': False}
     @staticmethod
     def validate_text(text):
         if not isinstance(text, str) or not text or len(text)>10000 or '\x00' in text:
@@ -219,6 +225,8 @@ class Service:
                 if self.backend.draft() != text: raise SafetyError('Draft changed before send')
                 attempted = True
                 self.backend.send(recipient, text)
+                if getattr(self.backend, 'stable_message_ids', True) is False:
+                    raise SafetyError('no_stable_message_ids')
                 verified = self.wait_for_send(recipient, text, before)
                 result = {'status': 'sent' if verified else 'unknown', 'attempted': True,
                           'sent': True if verified else None, 'delivered': None, 'verified': verified}

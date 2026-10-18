@@ -48,7 +48,7 @@ def main():
                  'selectors':{key:paths[name] for key,name in {'identity':'Identity','composer':'Composer',
                    'search':'Search','results':'Results','conversation':'Conversation','sidebar':'Sidebar','send':'Synthetic Send'}.items()},
                  'outgoing_message':{'role':'text','name':'not-a-real-message'},'self_description':'synthetic-self-marker'}
-        with tempfile.TemporaryDirectory(prefix='viber-synthetic-',dir=os.environ['TMPDIR']) as tmp:
+        with tempfile.TemporaryDirectory(prefix='viber-synthetic-') as tmp:
             path=Path(tmp)/'profile.json';path.write_text(json.dumps(profile))
             backend=LinuxBackend(str(path))
             # Direct worker check exposes Python API failures only on this synthetic tree.

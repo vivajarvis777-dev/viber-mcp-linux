@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "window_size": [950, 780],
+  "languages": "eng+ukr+rus",
+  "input_calibrated": false,
+  "send_calibrated": false,
+  "regions": {
+    "status": [0, 0, 300, 45],
+    "header": [300, 0, 650, 70],
+    "sidebar": [0, 90, 300, 690],
+    "conversation": [300, 70, 650, 640]
+  },
+  "points": {},
+  "empty_search_labels": ["Search...", "Пошук..."],
+  "empty_composer_labels": ["Type a message...", "Введіть повідомлення..."],
+  "offline_labels": ["No internet connection", "Немає з’єднання", "Нет подключения"]
+}

@@ -1,0 +1,22 @@
+# Merge this entry into mcp_servers; preserve all existing entries.
+# Use actual verified desktop environment, not a historical DISPLAY.
+mcp_servers:
+  viber:
+    command: /ABSOLUTE/PATH/viber-mcp-linux/.venv/bin/python
+    args: [/ABSOLUTE/PATH/viber-mcp-linux/server.py]
+    timeout: 90
+    connect_timeout: 15
+    supports_parallel_tool_calls: false
+    env:
+      VIBER_BACKEND: x11
+      VIBER_ALLOW_GUI: "1"
+      VIBER_ALLOW_INPUT: "0"
+      VIBER_ENABLE_SEND: "0"
+      VIBER_UI_PROFILE: /ABSOLUTE/PRIVATE/PATH/ui-profile.json
+      VIBER_STATE_DIR: /ABSOLUTE/PRIVATE/PATH/state
+      VIBER_ATSPI_PYTHON: /ABSOLUTE/PATH/viber-mcp-linux/.venv/bin/python
+      DISPLAY: ":REPLACE_WITH_ACTUAL_DISPLAY"
+      XAUTHORITY: /home/USER/.Xauthority
+      XDG_SESSION_TYPE: x11
+      XDG_RUNTIME_DIR: /run/user/UID
+      DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/UID/bus

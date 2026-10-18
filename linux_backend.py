@@ -14,6 +14,7 @@ class SafetyError(RuntimeError):
 
 
 class LinuxBackend:
+    worker_name = 'atspi_worker.py'
     def __init__(self, profile=None, timeout=8):
         self.profile = profile or os.getenv('VIBER_UI_PROFILE')
         self.timeout = timeout
@@ -32,11 +33,14 @@ class LinuxBackend:
     def reset(self):
         self.cancelled.clear()
 
+    def abort(self, process):
+        process.kill()
+
     def stop(self):
         self.cancelled.set()
         with self.guard:
             if self.process and self.process.poll() is None:
-                self.process.kill()
+                self.abort(self.process)
         # AT-SPI setTextContents/doAction never hold modifier keys or pointer grabs.
         return {'stopped': True, 'input_grabs': False}
 
@@ -50,7 +54,7 @@ class LinuxBackend:
             if self.cancelled.is_set():
                 raise SafetyError('cancelled')
             p = subprocess.Popen([os.getenv('VIBER_ATSPI_PYTHON', '/usr/bin/python3'),
-                                  str(Path(__file__).with_name('atspi_worker.py'))],
+                                  str(Path(__file__).with_name(self.worker_name))],
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  text=True)
             self.process = p
@@ -71,7 +75,7 @@ class LinuxBackend:
                 raise SafetyError(code if isinstance(code, str) and code in CODES else 'operation_failed')
             return response['result']
         except subprocess.TimeoutExpired:
-            p.kill()
+            self.abort(p)
             p.communicate()
             raise SafetyError('AT-SPI timeout; outcome may be unknown') from None
         finally:
@@ -86,3 +90,33 @@ class LinuxBackend:
     def read(self, region): return self.call('read', region=region)
     def messages(self): return self.call('messages')
     def send(self, recipient, text): return self.call('send', recipient=recipient, text=text)
+
+
+class X11Backend(LinuxBackend):
+    """Opt-in calibrated X11 adapter. OCR never supplies stable message IDs."""
+    worker_name = 'x11_worker.py'
+    stable_message_ids = False
+
+    def abort(self, process):
+        # Let the worker restore its clipboard on cancellation/timeout.
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+    def health(self):
+        return {**super().health(), 'backend': 'x11-ocr',
+                'ocr_available': bool(shutil.which(os.getenv('VIBER_TESSERACT', 'tesseract'))),
+                'clipboard_available': bool(shutil.which('xclip')),
+                'delivery_verification': False, 'stable_message_ids': False}
+
+    def read_visible(self, region):
+        return self.call('read', region=region)
+
+
+def configured_backend():
+    mode = os.getenv('VIBER_BACKEND', 'atspi')
+    if mode not in ('atspi', 'x11'):
+        raise SafetyError('Unknown VIBER_BACKEND; choose atspi or x11')
+    return X11Backend() if mode == 'x11' else LinuxBackend()
