@@ -311,7 +311,8 @@ class Desktop:
                     self.key('ctrl+a')
                     self.key('BackSpace')
 
-    def send(self, recipient, text):
+    def preflight_send(self):
+        self.guard(input_action=True)
         if os.getenv('VIBER_ENABLE_SEND') != '1':
             raise SafetyError('input_disabled')
         if self.profile.get('send_calibrated') is not True:
@@ -320,6 +321,10 @@ class Desktop:
         if any(normalized(marker) in status for marker in self.profile.get('offline_labels',
                    ['No internet connection', 'Немає з’єднання', 'Нет подключения'])):
             raise SafetyError('offline')
+        return {'ready_for_guarded_attempt': True, 'delivered': None}
+
+    def send(self, recipient, text):
+        self.preflight_send()
         self.verify(recipient)
         if self.draft() != text:
             raise SafetyError('draft_changed')
@@ -342,6 +347,8 @@ def dispatch(desktop, request):
         return desktop.navigate(request['query'])
     if action == 'send':
         return desktop.send(request['recipient'], request['text'])
+    if action == 'preflight_send':
+        return desktop.preflight_send()
     if action == 'messages':
         # OCR has no stable Viber message ID. Domain must never claim verified sent.
         return []

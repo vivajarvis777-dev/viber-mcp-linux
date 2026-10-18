@@ -218,6 +218,9 @@ class Service:
             attempted = False
             result = {'status': 'blocked', 'attempted': False, 'sent': False, 'delivered': None, 'verified': False}
             try:
+                preflight = getattr(self.backend, 'preflight_send', None)
+                if preflight is not None:
+                    preflight()
                 if navigate: self.navigate(recipient, 'My Notes' if recipient=='self:my-notes' else None)
                 self.draft(recipient, text)
                 before = {m['id'] for m in self.backend.messages()}

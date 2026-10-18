@@ -85,6 +85,7 @@ def test_offline_never_clicks_send(monkeypatch):
     monkeypatch.setenv('VIBER_ENABLE_SEND', '1')
     d = Desktop.__new__(Desktop)
     d.profile = {'send_calibrated': True}
+    d.guard = lambda **kw: None
     d.ocr = lambda region: [line('No internet connection')]
     d.click = lambda *a: pytest.fail('clicked send offline')
     with pytest.raises(SafetyError, match='offline'):
@@ -136,3 +137,19 @@ def test_ocr_send_unknown_and_same_token_never_repeats(tmp_path):
     second = service.reply(TEXT, token, NUMBER)
     assert second['replayed'] is True
     assert backend.sends == 1
+
+
+def test_failed_preflight_never_navigates_or_changes_draft(tmp_path):
+    from tests.test_domain import NUMBER, TEXT
+    backend = Fake()
+    backend.value = 'Existing user draft'
+    def offline():
+        raise SafetyError('offline')
+    backend.preflight_send = offline
+    service = Service(backend, tmp_path / 'state', send_enabled=True)
+    token = service.store().approve(NUMBER, TEXT)
+    result = service.send_message(NUMBER, TEXT, approval_token=token)
+    assert result['status'] == 'blocked' and result['attempted'] is False
+    assert result['reason'] == 'offline'
+    assert backend.calls == [] and backend.sends == 0
+    assert backend.value == 'Existing user draft'

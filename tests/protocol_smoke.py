@@ -20,6 +20,11 @@ async def smoke(state):
             tools=await session.list_tools()
             names={t.name for t in tools.tools}
             assert names==UPSTREAM|{'health','stop','read_visible'},names
+            by_name={tool.name:tool for tool in tools.tools}
+            for name in ('health','read_visible','list_chats','list_contacts'):
+                assert by_name[name].annotations.readOnlyHint is True, name
+            for name in ('send_message','reply','put_draft'):
+                assert by_name[name].annotations.readOnlyHint is False, name
             health=await session.call_tool('health',{})
             assert not health.isError
             contacts=await session.call_tool('list_contacts',{})

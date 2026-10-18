@@ -114,6 +114,9 @@ class X11Backend(LinuxBackend):
     def read_visible(self, region):
         return self.call('read', region=region)
 
+    def preflight_send(self):
+        return self.call('preflight_send')
+
 
 def configured_backend():
     mode = os.getenv('VIBER_BACKEND', 'atspi')

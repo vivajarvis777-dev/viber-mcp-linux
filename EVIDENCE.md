@@ -303,3 +303,30 @@ Do not reset/deactivate the retained account or send a test without separate app
   with Python 3.11 (unit + real MCP stdio), and Ubuntu 24.04 isolated X11 fixture.
 - Господар confirmed the same Viber account works on the phone. Desktop remains
   offline; clean desktop re-pairing requires separate approval and manual QR scan.
+
+## Clean-profile approval and Hermes compatibility probe — 2026-10-18
+
+Господар explicitly approved closing desktop Viber, preserving the current
+`.ViberPC` in a private backup, and preparing a fresh profile/QR for manual phone
+pairing. That operation completed; the preserved profile is under the existing
+private reinstall rollback root. New Viber displayed phone/scan instructions,
+with no connection-error marker observed on the activation screen. QR contents,
+activation strings and screenshots were not saved or printed. This does not
+prove a paired or online messaging session; manual activation is pending.
+
+An isolated process used the actual installed Hermes runtime and its committed
+Python 3.14 dependency environment. Production config was not loaded/changed;
+HERMES_HOME was temporary, no model was called, only health/read_visible were
+registered. Metadata discovery succeeded but `trust:untrusted` blocked health:
+wire `readOnlyHint:true` became an internal false hint. Actual SDK v2 exposes
+`read_only_hint`, while Hermes checks only the SDK v1 camelCase attribute.
+The approval prompt was not accepted and the RPC did not execute.
+
+Prepared `compat/hermes-sdk2-readonly.patch`; did not patch production or weaken
+trust. 15 fail-closed compatibility cases passed, plus actual installed SDK2
+reader/writer classification against the proposed pure function. Patch applies
+cleanly to a copy of the installed module. See compat/README.md.
+
+Also moved the X11 send preflight ahead of navigation/drafting. An offline or
+uncalibrated attempt now returns blocked before any clipboard/UI write; the
+worker rechecks immediately before clicking. 106 tests pass after this change.

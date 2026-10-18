@@ -14,3 +14,9 @@
 - [ ] Живе калібрування вводу/identity та узгоджене тестове повідомлення.
 - [ ] Після погодження додати готовий MCP entry до production Hermes.
 - [x] Відправити код у приватний GitHub; draft PR #1, Debian/X11 CI успішний.
+
+- [x] За окремим погодженням зберегти старий профіль і підготувати новий екран активації.
+- [ ] Господар сканує QR; перевірити нову desktop-сесію.
+- [x] Знайти й відтворити readOnlyHint/read_only_hint несумісність встановленого Hermes.
+- [x] Підготувати fail-closed SDK2 patch і перевірити 15 compatibility cases.
+- [ ] За погодженням застосувати Hermes compatibility patch та перевірити registry dispatch.
