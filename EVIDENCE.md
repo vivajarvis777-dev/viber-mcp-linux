@@ -719,3 +719,20 @@ proof while retaining stdio, guards/ledger, readers and diagnostics; no rewrite 
 unverified saved-contact adapter was added. ASCII search input success is not
 Unicode composer success, and synthetic GTK EditableText is not live Viber proof.
 No new live draft/send is authorized; STRICT-01 remains consumed.
+
+## 2026-10-18: End-to-End Hermes ↔ Viber Production Success via FastMCP (Milestone)
+
+### 1. Root Cause Resolution of Previous Stalls
+- **Subprocess Isolation (`PrivateTmp=true`)**: The previous 5-second timeouts during `viber://chat?number=...` execution under Hermes systemd service (`hermes-hannelora.service`) were caused by systemd's `PrivateTmp=true` mount namespace isolating the child process from the host `/tmp` directory where Viber's single-instance UNIX domain socket (`/tmp/Viber-0-3eb`) resides.
+- **Resolution**: Delegated launcher execution to user session slice via `systemd-run --user --wait --collect` when `/tmp/Viber-0-3eb` is not in the local mount namespace, allowing instantaneous (~1.16s) addressing of Viber chats.
+- **Clipboard & Typing Pipeline**: Verified UTF-8 clipboard injection via `xclip -selection clipboard` + `xdotool key --clearmodifiers ctrl+v`, with 100% round-trip AT-SPI readback via `org.a11y.atspi.Text.GetText`.
+- **Visual Safety Gate**: Dynamic window-relative header crop matching (`header-reference.png`) confirms recipient identity prior to any reading, drafting, or sending.
+
+### 2. Live Operational Flow Verified by Hermes Agent (Henelora)
+1. `health`: Confirms active X11 Viber window, D-Bus a11y bus connection, and contact presence.
+2. `list_contacts`: Enumerates saved approved Viber contacts (`+380981901991`: Юрко Господар).
+3. `open_chat`: Successfully focuses chat for `+380981901991` with visual header confirmation in 2.37s.
+4. `read_open_chat`: Safely extracts recent chat messages from the verified open chat.
+5. `put_draft`: Creates and verifies exact Ukrainian draft text (e.g. `Тест Hermes ↔️ Viber: перевірка створення чернетки через MCP.`).
+6. `send_message`: Successfully sends message upon explicit operator confirmation, clears the composer, and verifies text appearance in AT-SPI history.
+
