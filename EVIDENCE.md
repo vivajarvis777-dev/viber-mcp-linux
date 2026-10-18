@@ -293,3 +293,13 @@ private deps directory. Subsequent launch has a real visible Viber window.
 Reinstallation **did not fix offline status**. Existing Viber TCP 443 connection
 and absence of proxy environment variables do not prove working messaging.
 Do not reset/deactivate the retained account or send a test without separate approval.
+
+### GitHub verification
+
+- Private repository confirmed via GitHub API. Draft PR:
+  https://github.com/vivajarvis777-dev/viber-mcp-linux/pull/1 .
+- Source commit `a33e42b3f1f65f38d239a1beec5452ac2fdec599` verified on remote branch.
+- GitHub Actions run 39099935772 succeeded for both jobs: Debian Bookworm container
+  with Python 3.11 (unit + real MCP stdio), and Ubuntu 24.04 isolated X11 fixture.
+- Господар confirmed the same Viber account works on the phone. Desktop remains
+  offline; clean desktop re-pairing requires separate approval and manual QR scan.
