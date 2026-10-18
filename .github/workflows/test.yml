@@ -17,6 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Isolated desktop test dependencies
-        run: sudo apt-get update && sudo apt-get install -y xvfb python3-gi gir1.2-gtk-3.0 python3-pil x11-utils xdotool xclip tesseract-ocr tesseract-ocr-eng tesseract-ocr-ukr tesseract-ocr-rus
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3-gi gir1.2-gtk-3.0 python3-pil x11-utils xdotool xclip xsel tesseract-ocr tesseract-ocr-eng tesseract-ocr-ukr tesseract-ocr-rus
+      - name: Isolated refused and stalled clipboard owners
+        run: VIBER_XSEL=/usr/bin/xsel python3 tests/clipboard_x11.py
       - name: Real X11 fixture, no Viber account
         run: python3 tests/synthetic_x11.py

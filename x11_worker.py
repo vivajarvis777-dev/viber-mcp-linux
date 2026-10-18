@@ -243,20 +243,24 @@ class Desktop:
     def clipboard_identity(self):
         """Copy number from the current contact's calibrated header menu, then restore clipboard."""
         number = None
+        menu_may_be_open = False
         try:
             with self.clipboard():
                 sentinel = ('viber-identity-' + uuid.uuid4().hex).encode()
                 self.clipboard_set(sentinel)
+                menu_may_be_open = True
                 self.click(self.point('identity_menu'), button=3)
                 time.sleep(.12)
                 self.click(self.point('copy_number'))
                 deadline = time.monotonic() + .6
                 while time.monotonic() < deadline:
-                    value = self.clipboard_get()
+                    with phase('identity_copy'):
+                        value = self.clipboard_get()
                     if value != sentinel:
                         candidate = re.sub(r'[\s()-]', '', value.decode('utf-8'))
                         if re.fullmatch(r'(?:\+[1-9][0-9]{7,14}|[0-9]{8,15})', candidate):
                             number = candidate
+                            menu_may_be_open = False
                             break
                         raise SafetyError('identity_not_visible')
                     time.sleep(.03)
@@ -264,11 +268,12 @@ class Desktop:
                     raise SafetyError('identity_not_visible')
         except BaseException:
             # Cancel a failed menu without masking the original diagnostic.
-            try:
-                self.key('Escape')
-            except Exception:
-                with phase('cleanup'):
-                    record('keyboard', 'cleanup')
+            if menu_may_be_open:
+                try:
+                    self.key('Escape')
+                except Exception:
+                    with phase('cleanup'):
+                        record('keyboard', 'cleanup')
             raise
         self.guard()
         return number
@@ -302,15 +307,28 @@ class Desktop:
 
     @staticmethod
     def clipboard_get():
-        if os.getenv('VIBER_XSEL'):
-            try:
-                return subprocess.run([os.environ['VIBER_XSEL'], '--clipboard', '--output'],
-                                      capture_output=True, timeout=3, check=True,
-                                      env={**os.environ, 'LC_ALL': 'C.UTF-8'}).stdout
-            except (OSError, subprocess.SubprocessError) as error:
-                record_process_error('clipboard', error, 3)
-                raise SafetyError('clipboard_failed') from None
-        return command(['xclip', '-selection', 'clipboard', '-o', '-target', 'UTF8_STRING'])
+        # xsel returns success+empty after a refused conversion; both CLI readers
+        # can silently fall back from UTF8_STRING to STRING. Request one target.
+        args = [os.getenv('VIBER_CLIPBOARD_PYTHON', '/usr/bin/python3'),
+                str(Path(__file__).with_name('clipboard_reader.py'))]
+        try:
+            output = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True,
+                                    timeout=3, check=True, close_fds=True,
+                                    env={**os.environ, 'LC_ALL': 'C.UTF-8'})
+        except (OSError, subprocess.SubprocessError) as error:
+            record_process_error('clipboard', error, 3)
+            raise SafetyError('clipboard_failed') from None
+        try:
+            result = json.loads(output.stdout)
+            if set(result) != {'utf8_base64'} or not isinstance(result['utf8_base64'], str):
+                raise ValueError()
+            data = base64.b64decode(result['utf8_base64'], validate=True)
+            if len(data) > 1024 * 1024:
+                raise ValueError()
+            data.decode('utf-8', errors='strict')
+            return data
+        except (ValueError, TypeError):
+            raise SafetyError('clipboard_failed') from None
 
     @staticmethod
     def clipboard_set(data):
@@ -334,21 +352,27 @@ class Desktop:
     @contextmanager
     def clipboard(self):
         self.guard(input_action=True)
-        if self.clipboard_owner() == 0:
+        owner = self.clipboard_owner()
+        if owner == 0:
             with restore_after(self.clipboard_clear):
                 yield
             return
-        try:
-            targets = command(['xclip', '-selection', 'clipboard', '-o', '-target', 'TARGETS']).decode().split()
-        except SafetyError:
-            # Absence and inaccessible clipboard cannot be distinguished safely.
-            raise SafetyError('clipboard_unsupported') from None
-        allowed = {'TARGETS', 'MULTIPLE', 'TIMESTAMP', 'SAVE_TARGETS', 'UTF8_STRING', 'DELETE', 'INCR',
-                   'STRING', 'TEXT', 'COMPOUND_TEXT', 'text/plain', 'text/plain;charset=utf-8'}
-        if 'UTF8_STRING' not in targets or set(targets) - allowed:
-            raise SafetyError('clipboard_unsupported')
-        saved = self.clipboard_get()
-        with restore_after(lambda: self.clipboard_set(saved)):
+        with phase('clipboard_snapshot'):
+            try:
+                targets = command(['xclip', '-selection', 'clipboard', '-o', '-target', 'TARGETS']).decode().split()
+            except SafetyError:
+                raise SafetyError('clipboard_unsupported') from None
+            allowed = {'TARGETS', 'MULTIPLE', 'TIMESTAMP', 'SAVE_TARGETS', 'UTF8_STRING', 'DELETE', 'INCR',
+                       'STRING', 'TEXT', 'COMPOUND_TEXT', 'text/plain', 'text/plain;charset=utf-8'}
+            if 'UTF8_STRING' not in targets or set(targets) - allowed:
+                raise SafetyError('clipboard_unsupported')
+            saved = self.clipboard_get()
+            if self.clipboard_owner() != owner:
+                raise SafetyError('clipboard_changed')
+        def restore():
+            with phase('clipboard_restore'):
+                self.clipboard_set(saved)
+        with restore_after(restore):
             yield
 
     def copy_field(self, name, allow_empty=False):

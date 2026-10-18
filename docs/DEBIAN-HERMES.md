@@ -12,7 +12,11 @@ sudo apt-get install python3-venv python3-pip xdotool xclip x11-utils tesseract-
   tesseract-ocr-eng tesseract-ocr-ukr tesseract-ocr-rus
 ```
 
-Для AT-SPI: `python3-gi gir1.2-atspi-2.0`; для тестів GUI: `xvfb python3-gi gir1.2-gtk-3.0`.
+Для AT-SPI: `python3-gi gir1.2-atspi-2.0`.
+Для X11-вводу потрібні `python3-gi gir1.2-gtk-3.0`: окремий системний Python
+читає саме UTF8_STRING через GTK3, відрізняючи відмову від коректного порожнього
+результату. Шлях інтерпретатора — `VIBER_CLIPBOARD_PYTHON` (типово `/usr/bin/python3`).
+Для тестів GUI додатково `xvfb xsel`. Саме read-only OCR не потребує GTK reader.
 Сам Viber встановлюється й активується користувачем окремо.
 
 ```sh

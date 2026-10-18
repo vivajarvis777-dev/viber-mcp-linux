@@ -13,7 +13,7 @@
 - [x] Погоджено відновити AT-SPI та перезапустити Viber; Text читання працює.
 - [x] Застосувати погоджений SDK2 patch, підключити чотири read-only tools Hermes.
 - [x] Перезапустити тільки погоджений Hermes gateway; перевірити actual registry dispatch.
-- [x] Негативні тести фокусу, номера, clipboard failure, replay; 149 тестів пройшло.
+- [x] Негативні тести фокусу, номера, clipboard failure, replay; 160 тестів пройшло.
 - [ ] Підтвердити точний Unicode-текст чернетки в живому Viber через MCP.
 - [ ] Окремий погоджений тест send із незалежним human approval; перевірка на телефоні.
 - [x] Код07320d8: Debian/X11 CI успішний; PR оновлено, лишається draft.
@@ -58,3 +58,16 @@ approval rows0. Діагностика цього разу збережена. R
 нестабільне отримання clipboard; процес-власник не встановлений.
 Пропозиція наступного кроку: за окремою згодою очистити лише CLIPBOARD цього
 сеансу та провести один guarded draft-only тест. Поки очищення не виконано.
+
+## Ізольоване виправлення читання clipboard
+
+- [x] Відтворити xsel rc0/empty на відмові власника; старий reader приймав помилку.
+- [x] Запитувати точний UTF8_STRING окремим bounded GTK3 helper без STRING fallback.
+- [x] Блокувати snapshot при зміні owner; прибрати Escape після невдалого snapshot.
+- [x] 160 unit tests, protocol,7 hostile-owner Xvfb cases, full Unicode/restore fixture.
+- [x] Додати fixture в X11 CI та описати GTK3 dependency без встановлень на VPS.
+- [ ] Після нової окремої згоди — trial VBR-20261018-STRICT-01, максимум один put_draft.
+
+Попередня спроба4694мс спожита; переказ старої згоди не дозволяє дубль.
+Новий trial не очищує реальний буфер. Під час цього етапу не було live UI/read
+операцій, змін production, Remmina, тайм-ауту3с чи прав доступу.

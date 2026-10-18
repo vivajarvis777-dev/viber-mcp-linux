@@ -31,7 +31,7 @@ CODES |= frozenset({'x11_required', 'window_missing_or_ambiguous', 'window_not_f
     'ocr_failed', 'identity_not_visible', 'offline', 'clipboard_unsupported',
     'clipboard_failed', 'input_disabled', 'draft_unreadable', 'no_stable_message_ids',
     'self_identity_unavailable', 'ui_command_failed', 'profile_invalid', 'send_button_changed',
-    'navigation_command_failed'})
+    'navigation_command_failed', 'clipboard_changed'})
 
 
 def reason_code(error):

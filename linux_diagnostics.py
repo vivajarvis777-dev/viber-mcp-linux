@@ -9,7 +9,8 @@ import time
 
 _phase = ContextVar('viber_ui_phase', default='setup')
 PHASES = {'setup', 'identity', 'draft', 'write', 'navigate', 'send', 'read',
-          'preflight_send', 'messages', 'cleanup', 'worker'}
+          'preflight_send', 'messages', 'cleanup', 'worker', 'clipboard_snapshot',
+          'identity_copy', 'clipboard_restore'}
 COMMANDS = {'window_search', 'window_focus', 'window_pid', 'window_geometry',
             'pointer', 'keyboard', 'clipboard', 'native_text', 'other', 'worker',
             'diagnostic_probe'}

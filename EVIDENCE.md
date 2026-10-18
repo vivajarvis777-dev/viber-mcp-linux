@@ -528,3 +528,55 @@ CLIPBOARD selection, verify the reset once, then run one diagnostic draft-only
 trial with the same expected recipient/text guards. Clearing may discard existing
 copied content, so separate owner approval is required. No production/Remmina
 changes, additional access, service restart, or send is proposed.
+
+## Isolated selection-owner reproduction and narrow fixes
+
+No real DISPLAY:10 or user clipboard operations were performed for this phase.
+The test driver allocated a fresh Xvfb via -displayfd, removed DBUS/XAUTHORITY
+from fixture clients and controlled a synthetic X11 SelectionRequest owner.
+
+The installed VPS xsel reports1.2.1, binary SHA256
+`3d8a4aff612177a1daca8c21740e258f1ebaf64aa74f93819829194a0af73d92`.
+Upstream tag1.2.1 resolves to8c89a9225ea898b67c5a067d1a7f8e78f0a458aa. Its
+get_selection_text/main behavior agrees with the observed binary; no claim of
+byte-for-byte equivalence to distribution-patched source is made.
+
+BEFORE FIX: a fake owner advertised UTF8_STRING but refused both UTF8 and STRING
+conversion. xsel returned rc0 with0 bytes. Actual old Desktop.clipboard_get
+accepted that as data, and the new regression stopped with
+`AssertionError: Accepted failed conversion: refuse`. Source inspection also
+confirms that both xsel and xclip may fall back from UTF8_STRING to STRING.
+A plain CLI swap therefore would not provide strict UTF8 semantics. Output mode
+is not xsel's daemon mode; inherited daemon output pipes are not established as
+the cause of the observed live read timeout. Input writers already use DEVNULL
+for stdout/stderr, so their detached owners cannot hold a captured output pipe.
+
+AFTER FIX: clipboard_reader.py performs one exact GTK3 wait_for_contents target
+request in a bounded helper, validates type/format/length/UTF8 and distinguishes
+valid empty data from failure. Timeout remains3s; stdout is private protocol data,
+not diagnostic text. The helper does not set/clear ownership, fork or daemonize.
+Xvfb cases refuse/fallback/wrongtype/silent/empty/unicode/switch all passed.
+On timeout and normal exit the driver verifies helper returncode, closed stdout/
+stderr and ChildProcessError from a second waitpid (already reaped). The owner
+switch case exercises Desktop.clipboard, not only the standalone byte reader.
+
+A second reproduced defect was unconditional Escape after snapshot failure.
+Fixed cleanup to act only when the contact menu might have opened. The regression
+asserts no click/key/set/clear after failed snapshot, preserving the primary error.
+Thus earlier evidence of no draft/send did not imply zero UI: the old cleanup
+could issue Escape even before entering the clipboard body.
+
+160 local tests passed in10.18s. Real MCP protocol smoke passed. Full isolated
+GTK/Xvfb fixture with the installed xsel writer passed OCR identity, exact
+Ukrainian/emoji/newline readback, clipboard restoration and local button callback.
+CI now includes the hostile-owner fixture alongside the existing desktop fixture.
+GTK3 GI is now an explicit X11-input dependency; it already existed on the VPS,
+so no host packages, access rights or production services were changed.
+
+The new reader is NOT claimed to restore an unresponsive real owner or to solve
+all prior live X11 connection failures. Production remains on52e7ef2/read-only.
+The previous guarded trial4694ms/put_draft0 is consumed; no repeat or clipboard
+clearing occurred. Proposed next trial ID: VBR-20261018-STRICT-01, not authorized
+or executed. It uses one fresh owner-only diagnostic path, actual health send0,
+bounded identity/native draft readers and at most one expected-recipient
+put_draft. No clearing of the original clipboard, restart or new access.

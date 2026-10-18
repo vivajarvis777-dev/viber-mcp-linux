@@ -45,8 +45,9 @@ Viber. Перевірити фактичний executable/PID; не викону
 
 Після Copy number деякі нові X11-з'єднання зависають ще на handshake.
 Звичайні запити й ізольоване встановлення selection можуть працювати.
-Root cause не підтверджено. `VIBER_XSEL` дозволяє явно вибрати локальний xsel
-для UTF8 clipboard get/set; TARGETS перевіряються, plaintext відновлюється,
+Root cause не підтверджено. `VIBER_XSEL` дозволяє явно вибрати локальний xsel лише
+для clipboard set; читання виконує окремий GTK3 helper із точним UTF8_STRING.
+TARGETS перевіряються, plaintext відновлюється,
 порожня selection без власника повертається до такого самого стану.
 Rich clipboard відхиляється, помилки блокують операцію. Цей шлях не оголошено
 стабільним на живому RDP; production input/send вимкнені.
@@ -88,3 +89,29 @@ Helper не змінює права й не надає погодження на
 перевірки на сервері до write. Максимум один put_draft,30 с, без retry.
 Невизначений або помилковий результат спершу перевіряється окремим read-only
 читанням поля. Погодження потрібне на конкретний обмежений живий тест.
+
+## Відтворені дефекти CLI читання та cleanup
+
+На ізольованому Xvfb встановлений xsel1.2.1 повернув rc0 і0 байтів після
+відмови власника у конверсії. Старий reader прийняв це за порожні дані.
+Також xsel і xclip можуть переходити з UTF8_STRING на STRING. TARGETS із
+UTF8_STRING не доводить, що власник справді віддає відповідний вміст.
+
+Новий `clipboard_reader.py` запитує тільки UTF8_STRING через GTK3; перевіряє
+тип, format8, довжину≤1MiB та коректність UTF-8. Коректні0 байтів дозволені;
+відмова/інший тип/некоректні дані блокують операцію. Helper має stdin=DEVNULL,
+закриті сторонні fd та незмінний зовнішній timeout3с; після timeout завершується
+й reaped. Він не змінює selection ownership і не створює daemon.
+
+Якщо збереження початкового clipboard не вдалося, жодних click/key/set/clear
+не відбувається. Escape дозволений лише після спроби відкрити меню. Зміна
+власника між початковою перевіркою і завершенням snapshot також блокує ввід.
+Діагностичні етапи: clipboard_snapshot, identity_copy, clipboard_restore.
+
+Сім режимів fake owner перевірено на новому Xvfb; коректний Unicode, empty,
+відмова, STRING fallback, неправильний тип, silence та owner switch.
+Це не відновлює дані несправного зовнішнього owner і не доводить усунення
+попередніх live тайм-аутів. Реальний clipboard не очищувався.
+
+Джерела: [xsel1.2.1](https://github.com/kfish/xsel/blob/8c89a9225ea898b67c5a067d1a7f8e78f0a458aa/xsel.c),
+[Gtk wait_for_contents](https://docs.gtk.org/gtk3/method.Clipboard.wait_for_contents.html).
