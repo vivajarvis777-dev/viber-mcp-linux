@@ -123,6 +123,45 @@ mcp = FastMCP("viber_linux_mcp", instructions="Universal Viber MCP integration f
 _viber_lock = asyncio.Lock()
 
 
+@contextlib.contextmanager
+def sync_viber_ui_mutex(timeout: float | None = None, poll_interval: float = 0.05):
+    """Inter-process mutual exclusion for synchronous Viber UI worker threads."""
+    if timeout is None:
+        try:
+            timeout = float(os.getenv("VIBER_MUTEX_TIMEOUT", "10.0"))
+        except ValueError:
+            timeout = 10.0
+
+    lock_path = get_lock_file_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    acquired = False
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except (BlockingIOError, OSError):
+                if time.monotonic() >= deadline:
+                    raise ViberBusyError(
+                        f"Viber UI is busy (locked by another operation on {lock_path.name})"
+                    )
+                time.sleep(poll_interval)
+        yield
+    finally:
+        if acquired:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+
+
 @contextlib.asynccontextmanager
 async def viber_ui_mutex(timeout: float | None = None, poll_interval: float = 0.05):
     """Inter-process and inter-coroutine mutual exclusion for Viber UI operations."""
@@ -678,6 +717,22 @@ async def health() -> dict:
             else None
         )
 
+        try:
+            from viber_auto_responder import get_auto_responder
+            resp = get_auto_responder()
+            auto_responder_info = {
+                "enabled": resp.enabled,
+                "running": resp.is_running(),
+                "cooldown_hours": resp.cooldown_hours,
+                "stats": resp.ledger.get_auto_reply_stats(),
+            }
+        except Exception as err:
+            auto_responder_info = {
+                "enabled": os.getenv("VIBER_AUTO_REPLY_ENABLED") == "1",
+                "running": False,
+                "error": str(err),
+            }
+
         return {
             "status": "ok",
             "platform": "linux",
@@ -686,6 +741,7 @@ async def health() -> dict:
             "viber_window_found": w_ok,
             "viber_accessibility": dest,
             "active_contact": active_contact,
+            "auto_responder": auto_responder_info,
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -1040,6 +1096,12 @@ def parse_args():
 
 def run_server():
     args = parse_args()
+    if os.getenv("VIBER_AUTO_REPLY_ENABLED") == "1":
+        try:
+            from viber_auto_responder import get_auto_responder
+            get_auto_responder().start_dbus_listener()
+        except Exception:
+            pass
     if args.transport == "stdio":
         mcp.run(transport="stdio")
     else:
