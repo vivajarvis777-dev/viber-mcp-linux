@@ -117,9 +117,78 @@ mcp_servers:
 }
 ```
 
-### 3. n8n Workflow Automation
+### 3. n8n Workflow Automation (Native HTTP/SSE Transport)
 
-Configure an **MCP Client Node** in your n8n workflow connecting via stdio to `/path/to/viber-mcp-linux/server.py`. You can trigger automated Viber message drafting or notifications directly from webhooks, CRM updates, or incoming events.
+Viber MCP provides native **Streamable HTTP** and **Server-Sent Events (SSE)** transports alongside stdio, allowing n8n workflows to interact directly with Viber Desktop over authenticated HTTP.
+
+#### Starting the HTTP/SSE Server
+
+```bash
+# Generate a secure random token
+export VIBER_MCP_HTTP_TOKEN="your-secure-random-bearer-token"
+export VIBER_MCP_TRANSPORT="http"   # or "sse" / "streamable-http"
+export VIBER_MCP_HOST="127.0.0.1"    # default: 127.0.0.1
+export VIBER_MCP_PORT="8000"         # default: 8000
+
+# Optional: enable outbound sending (disabled by default)
+export VIBER_ENABLE_SEND="1"
+
+uv run linux_server.py --transport http --port 8000
+```
+
+#### Configuring n8n MCP Client Node
+
+1. In n8n, add an **MCP Client Node** (or MCP Tool in AI Agent workflows).
+2. Choose your transport connection:
+   - **Streamable HTTP (Recommended)**: `http://127.0.0.1:8000/mcp`
+   - **Server-Sent Events (SSE)**: `http://127.0.0.1:8000/sse`
+3. Add Authentication Header:
+   - Header Name: `Authorization`
+   - Header Value: `Bearer <VIBER_MCP_HTTP_TOKEN>`
+   *(Requests without this header or with an invalid token receive `401 Unauthorized`)*
+
+#### Health Check & Monitoring
+
+You can inspect server status at any time via curl or monitoring tools:
+```bash
+curl -H "Authorization: Bearer $VIBER_MCP_HTTP_TOKEN" http://127.0.0.1:8000/health
+```
+Response (no GUI actions performed):
+```json
+{
+  "platform": "linux",
+  "read_available": true,
+  "send_enabled": false,
+  "viber_window_found": true
+}
+```
+
+#### Minimal n8n Workflow
+
+A recommended minimal automated pipeline:
+```
+[Webhook / CRM Trigger]
+         │
+         ▼
+[MCP: health] ───────────────► Check read_available and viber_window_found
+         │
+         ▼
+[MCP: list_contacts] ────────► Resolve recipient phone or private alias
+         │
+         ▼
+[MCP: open_chat] ────────────► Navigate to recipient and verify subscriber gate
+         │
+         ▼
+[MCP: send_message] ─────────► Automated send (fail-closed, duplicate-protected)
+```
+
+#### Fail-Closed Pipeline Safety Guarantees
+
+- **Bearer Token Guard**: All HTTP endpoints (`/health`, `/mcp`, `/sse`, `/messages/`) enforce `VIBER_MCP_HTTP_TOKEN`.
+- **Recipient Gate**: Before sending, the server verifies that the recipient is an active Viber user. If Viber responds with *"isn't on Viber"* / *"not in your contact list"* or identity verification fails, the send is immediately rejected. Dynamic: valid new numbers pass without manual whitelisting.
+- **Anti-Duplicate Ledger**: The SQLite3 ledger tracks message digests `(recipient, text)`. Re-sending identical text to the same recipient is blocked to prevent message loops.
+- **Circuit Breaker**: Outbound sending is disabled unless `VIBER_ENABLE_SEND=1` is explicitly configured in the environment.
+- **Hermes stdio Compatibility**: The default stdio mode remains completely untouched for Hermes Agent.
 
 ---
 

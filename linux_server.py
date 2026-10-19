@@ -91,5 +91,105 @@ async def read_visible(region: Literal['conversation', 'sidebar', 'header', 'sta
     """
     return await invoke(service.read_visible, region)
 
+import hmac
+import os
+import sys
+from starlette.responses import JSONResponse
+
+class BearerAuthMiddleware:
+    def __init__(self, app, token: str):
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            auth = None
+            for name, val in scope.get("headers", []):
+                if name.lower() == b"authorization":
+                    auth = val.decode("latin1")
+                    break
+            if not auth or not auth.startswith("Bearer "):
+                response = JSONResponse(
+                    {"error": "Unauthorized", "detail": "Missing or invalid Bearer token"},
+                    status_code=401,
+                )
+                await response(scope, receive, send)
+                return
+            provided = auth[7:].strip()
+            if not hmac.compare_digest(provided, self.token):
+                response = JSONResponse(
+                    {"error": "Unauthorized", "detail": "Invalid Bearer token"},
+                    status_code=401,
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+def create_http_app(token: str | None = None):
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.routing import Route
+
+    expected_token = token or os.getenv("VIBER_MCP_HTTP_TOKEN")
+    if not expected_token:
+        raise ValueError("VIBER_MCP_HTTP_TOKEN environment variable is required for HTTP transport")
+
+    # Allow fresh session manager creation across runs/tests
+    mcp._session_manager = None
+
+    async def health_http(request):
+        data = await invoke(service.health)
+        return JSONResponse(data)
+
+    sse_app = mcp.sse_app()
+    http_app = mcp.streamable_http_app()
+
+    routes = [
+        Route("/health", health_http, methods=["GET"]),
+        *sse_app.routes,
+        *http_app.routes,
+    ]
+
+    return Starlette(
+        debug=False,
+        routes=routes,
+        middleware=[Middleware(BearerAuthMiddleware, token=expected_token)],
+        lifespan=lambda app: mcp.session_manager.run(),
+    )
+
+
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(description="Viber Linux FastMCP Server (stdio / HTTP / SSE)")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http", "sse", "streamable-http"],
+        default=os.getenv("VIBER_MCP_TRANSPORT", "stdio"),
+        help="Transport type: stdio (default) or http / sse / streamable-http",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.getenv("VIBER_MCP_HOST", "127.0.0.1"),
+        help="Host address for HTTP server (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("VIBER_MCP_PORT", "8000")),
+        help="Port for HTTP server (default: 8000)",
+    )
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    mcp.run(transport='stdio')
+    args = parse_args()
+    if args.transport == 'stdio':
+        mcp.run(transport='stdio')
+    else:
+        service.auto_approve = True
+        app = create_http_app()
+        import uvicorn
+        config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
+        server = uvicorn.Server(config)
+        asyncio.run(server.serve())

@@ -23,13 +23,29 @@ class LinuxBackend:
         self.process = None
         self.guard = threading.Lock()
 
+    def check_viber_window(self) -> bool:
+        if not (os.getenv('DISPLAY') and shutil.which('xdotool')):
+            return False
+        try:
+            res = subprocess.run(
+                ['xdotool', 'search', '--class', '^(Viber|ViberPC)$'],
+                capture_output=True, timeout=2, check=False
+            )
+            return res.returncode == 0 and bool(res.stdout.strip())
+        except Exception:
+            return False
+
     def health(self):
+        window_found = self.check_viber_window()
+        read_avail = bool(os.getenv('DISPLAY')) and (os.getenv('VIBER_ALLOW_GUI') == '1') and bool(self.profile)
         return {'platform': 'linux', 'display_configured': bool(os.getenv('DISPLAY')),
                 'session_bus_configured': bool(os.getenv('DBUS_SESSION_BUS_ADDRESS')),
                 'profile_configured': bool(self.profile), 'gui_enabled': os.getenv('VIBER_ALLOW_GUI') == '1',
                 'send_enabled': os.getenv('VIBER_ENABLE_SEND') == '1',
                 'xdotool_available': bool(shutil.which('xdotool')),
-                'live_chat_read': False, 'live_send_tested': False}
+                'live_chat_read': False, 'live_send_tested': False,
+                'read_available': read_avail,
+                'viber_window_found': window_found}
 
     def reset(self):
         self.cancelled.clear()

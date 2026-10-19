@@ -45,6 +45,23 @@ class Ledger:
                 yield db
         finally:
             db.close()
+    def is_duplicate(self, recipient, text, current_token=None):
+        d = digest(recipient, text)
+        with self.connect() as db:
+            rows = db.execute('SELECT token, state, result FROM approvals WHERE digest=?', (d,)).fetchall()
+            for t, state, res_str in rows:
+                if current_token and t == current_token:
+                    continue
+                if state == 'claimed':
+                    return True
+                if state == 'terminal' and res_str:
+                    try:
+                        res = json.loads(res_str)
+                        if res.get('sent') is True or res.get('status') == 'sent':
+                            return True
+                    except Exception:
+                        return True
+        return False
     def approve(self, recipient, text, ttl=300):
         token = str(uuid.uuid4())
         with self.connect() as db:
@@ -69,7 +86,7 @@ class Ledger:
 
 class Service:
     def __init__(self, backend=None, state=None, contacts=None, send_enabled=None,
-                 verification_timeout=3.0, poll_interval=0.1):
+                 verification_timeout=3.0, poll_interval=0.1, auto_approve=None):
         if not 0 < verification_timeout <= 30 or not 0 < poll_interval <= 1:
             raise ValueError('Invalid verification timing bounds')
         self.verification_timeout = verification_timeout
@@ -79,6 +96,7 @@ class Service:
         self.root = Path(state or os.getenv('VIBER_STATE_DIR', str(Path.home()/'.local/state/viber-mcp-linux')))
         self.contacts_path = contacts or os.getenv('VIBER_CONTACTS_FILE')
         self.send_enabled = os.getenv('VIBER_ENABLE_SEND') == '1' if send_enabled is None else send_enabled
+        self.auto_approve = os.getenv('VIBER_AUTO_APPROVE') == '1' if auto_approve is None else auto_approve
         self.lock = threading.Lock()
         self.ledger = None  # No filesystem/UI side effects at construction.
     def store(self):
@@ -118,13 +136,36 @@ class Service:
         return value if value == 'self:my-notes' else phone(value)
     def verify(self, recipient):
         if self.identity() != recipient: raise SafetyError('Exact recipient identity not verified')
+    def check_recipient_gate(self, recipient):
+        self.verify(recipient)
+        try:
+            conv = self.backend.read('conversation')
+            text_block = (conv.get('text', '') + ' ' + ' '.join(conv.get('lines', []))).lower()
+            not_on_viber_markers = (
+                "isn't on viber",
+                "is not on viber",
+                "not in your contact list",
+                "не є користувачем viber",
+                "не зареєстрований у viber",
+                "не зарегистрирован в viber",
+            )
+            for marker in not_on_viber_markers:
+                if marker in text_block:
+                    raise SafetyError('Recipient is not a Viber user')
+        except SafetyError:
+            raise
+        except Exception:
+            pass
     def navigate(self, recipient, query=None):
         result = self.backend.navigate(query or recipient)
         self.verify(recipient)
         return {'opened': recipient, **result}
     def open_chat(self, to):
         recipient = self.resolve(to)
-        with self.transaction(): return self.navigate(recipient)
+        with self.transaction():
+            res = self.navigate(recipient)
+            self.check_recipient_gate(recipient)
+            return res
     def open_and_read(self, to):
         recipient = self.resolve(to)
         with self.transaction():
@@ -215,6 +256,8 @@ class Service:
         if not self.send_enabled: raise SafetyError('Sending disabled')
         if not token: raise SafetyError('Independent human approval token required')
         with self.transaction():
+            if self.auto_approve and self.store().is_duplicate(recipient, text, current_token=token):
+                raise SafetyError('Duplicate message to recipient blocked by ledger')
             previous = self.store().claim(token, recipient, text)
             if previous is not None: return {**previous, 'replayed': True}
             attempted = False
@@ -224,6 +267,7 @@ class Service:
                 if preflight is not None:
                     preflight()
                 if navigate: self.navigate(recipient, 'My Notes' if recipient=='self:my-notes' else None)
+                self.check_recipient_gate(recipient)
                 self.draft(recipient, text)
                 before = {m['id'] for m in self.backend.messages()}
                 self.verify(recipient)
@@ -248,13 +292,33 @@ class Service:
         if dry_run:
             with self.transaction():
                 self.navigate(recipient)
+                self.check_recipient_gate(recipient)
                 return {**self.draft(recipient,text), 'dry_run': True}
+        if approval_token is None and self.auto_approve:
+            if not self.send_enabled:
+                raise SafetyError('Sending disabled')
+            if self.store().is_duplicate(recipient, text):
+                raise SafetyError('Duplicate message to recipient blocked by ledger')
+            approval_token = self.store().approve(recipient, text)
         return self.send(recipient,text,approval_token, navigate=True)
     def reply(self, text, approval_token=None, to=None):
         # Explicit identity is mandatory for sends: never infer authorization from open UI.
         if to is None: raise SafetyError('reply requires exact to and independent approval')
-        return self.send(self.resolve(to),text,approval_token)
+        recipient = self.resolve(to)
+        if approval_token is None and self.auto_approve:
+            if not self.send_enabled:
+                raise SafetyError('Sending disabled')
+            if self.store().is_duplicate(recipient, text):
+                raise SafetyError('Duplicate message to recipient blocked by ledger')
+            approval_token = self.store().approve(recipient, text)
+        return self.send(recipient,text,approval_token)
     def save_to_my_notes(self, text, approval_token=None):
+        if approval_token is None and self.auto_approve:
+            if not self.send_enabled:
+                raise SafetyError('Sending disabled')
+            if self.store().is_duplicate('self:my-notes', text):
+                raise SafetyError('Duplicate message to recipient blocked by ledger')
+            approval_token = self.store().approve('self:my-notes', text)
         return self.send('self:my-notes',text,approval_token,navigate=True)
     def health(self): return self.backend.health()
     def stop(self):

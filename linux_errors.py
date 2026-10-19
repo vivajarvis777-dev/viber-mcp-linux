@@ -24,8 +24,11 @@ REASONS = {
     'Draft changed before send': 'draft_changed',
     'Draft changed during verification': 'draft_changed',
     'Send verification deadline exceeded': 'verification_timeout',
+    'Recipient is not a Viber user': 'recipient_not_on_viber',
+    'Duplicate message to recipient blocked by ledger': 'duplicate_blocked',
 }
-CODES = frozenset(REASONS.values()) | {'atspi_unavailable', 'profile_invalid', 'operation_failed'}
+CODES = frozenset(REASONS.values()) | {'atspi_unavailable', 'profile_invalid', 'operation_failed',
+    'recipient_not_on_viber', 'duplicate_blocked'}
 CODES |= frozenset({'x11_required', 'window_missing_or_ambiguous', 'window_not_foreground',
     'unexpected_window_owner', 'window_geometry_changed', 'ocr_unavailable',
     'ocr_failed', 'identity_not_visible', 'offline', 'clipboard_unsupported',
