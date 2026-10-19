@@ -130,10 +130,12 @@ export VIBER_MCP_TRANSPORT="http"   # or "sse" / "streamable-http"
 export VIBER_MCP_HOST="127.0.0.1"    # default: 127.0.0.1
 export VIBER_MCP_PORT="8000"         # default: 8000
 
-# Optional: enable outbound sending (disabled by default)
+# Outbound sending enabled when explicitly allowed (default: 0)
 export VIBER_ENABLE_SEND="1"
 
-uv run linux_server.py --transport http --port 8000
+# Run single unified server in HTTP/SSE mode:
+uv run server.py --transport http --port 8000
+# (linux_server.py is also available as a backward-compatible decorator)
 ```
 
 #### Configuring n8n MCP Client Node
@@ -184,9 +186,11 @@ A recommended minimal automated pipeline:
 
 #### Fail-Closed Pipeline Safety Guarantees
 
-- **Bearer Token Guard**: All HTTP endpoints (`/health`, `/mcp`, `/sse`, `/messages/`) enforce `VIBER_MCP_HTTP_TOKEN`.
+- **Single Unified Server**: Both Hermes Agent (stdio) and n8n (HTTP/SSE) utilize the exact same codebase (`server.py` -> `viber_mcp_service.py`), canonical 8-tool set, and environment.
+- **Inter-Process File Mutex (`desktop.lock`)**: File-based `fcntl.flock` mutex serializes all GUI operations across separate processes (Hermes stdio process and n8n HTTP server). Only one UI interaction touches the Viber window at a time; concurrent requests wait with bounded timeout or return a clear `viber_busy` status.
+- **Shared Anti-Duplicate Ledger (`ledger.sqlite3`)**: The SQLite3 ledger tracks message digests `(recipient, text)` in a single shared file. Re-sending identical text to the same recipient is blocked regardless of which client initiated it (Hermes or n8n).
+- **Bearer Token Guard**: All HTTP endpoints (`/health`, `/mcp`, `/sse`, `/messages/`) enforce `VIBER_MCP_HTTP_TOKEN` (unauthorized requests return `401 Unauthorized`).
 - **Recipient Gate**: Before sending, the server verifies that the recipient is an active Viber user. If Viber responds with *"isn't on Viber"* / *"not in your contact list"* or identity verification fails, the send is immediately rejected. Dynamic: valid new numbers pass without manual whitelisting.
-- **Anti-Duplicate Ledger**: The SQLite3 ledger tracks message digests `(recipient, text)`. Re-sending identical text to the same recipient is blocked to prevent message loops.
 - **Circuit Breaker**: Outbound sending is disabled unless `VIBER_ENABLE_SEND=1` is explicitly configured in the environment.
 - **Hermes stdio Compatibility**: The default stdio mode remains completely untouched for Hermes Agent.
 
@@ -196,13 +200,13 @@ A recommended minimal automated pipeline:
 
 | Tool | Mode | Description |
 |---|---|---|
-| `health()` | Read-only | Returns Viber window visibility, AT-SPI accessibility status, and the currently active contact. |
+| `health()` | Read-only | Returns Viber window presence, AT-SPI accessibility connectivity, and send status without performing any GUI actions. |
 | `list_contacts()` | Read-only | Returns all known address book contacts and their aliases from `contacts.json`. |
 | `find_contact(query)` | Read-only | Search contacts by name, surname, alias, or phone number. Automatically normalizes direct phone numbers. |
 | `save_contact(phone, name, aliases)` | Write | Saves or updates contact metadata into `contacts.json` dynamically during runtime. |
-| `open_chat(to)` | Action | Opens the conversation for any phone number (`+380...`), contact name, or alias. |
-| `read_open_chat(to?)` | Read-only | Reads visible message bubbles from the currently open or specified chat via AT-SPI. |
-| `put_draft(to, text)` | Action | Pastes verified text into the chat composer via clipboard and validates it with exact AT-SPI readback. |
+| `open_chat(to)` | Action | Opens the conversation for any phone number (`+380...`), contact name, or alias (protected by mutex & recipient gate). |
+| `read_open_chat(to?)` | Read-only | Reads visible message bubbles from the currently open or specified chat via AT-SPI (protected by mutex). |
+| `put_draft(to, text)` | Action | Pastes verified text into the chat composer via clipboard and validates it with exact AT-SPI readback (protected by mutex). |
 | `send_message(to, text, approval_token)` | Destructive | Sends the prepared message after explicit operator approval, clears composer, and verifies delivery in chat history. |
 
 ---
@@ -211,20 +215,23 @@ A recommended minimal automated pipeline:
 
 ```mermaid
 flowchart TD
-    Agent["AI Agent (Hermes / Claude / n8n)"] -->|MCP stdio| Server["server.py (FastMCP)"]
-    Server --> Lock["asyncio.Lock (Sequential Safety)"]
+    Hermes["Hermes Agent (stdio)"] -->|MCP stdio| Server["server.py (FastMCP)"]
+    N8N["n8n Workflow (HTTP / SSE)"] -->|Bearer Auth /mcp| Server
     
-    subgraph Viber_Linux_Automation ["Viber Desktop Linux Automation"]
-        Lock --> Launcher["Launcher (viber://chat?number=...)"]
-        Lock --> ATSPI["Direct D-Bus AT-SPI Reader"]
-        Lock --> X11Input["X11 Clipboard & xdotool"]
-        Lock --> VisualCheck["Dynamic Window Header Verification"]
+    Server --> FlockMutex["Inter-Process Mutex (desktop.lock / fcntl.flock)"]
+    Server --> SharedLedger[("Shared Ledger (ledger.sqlite3)")]
+    
+    subgraph Viber_Linux_Automation ["Viber Desktop Linux Automation (Serialized)"]
+        FlockMutex --> Launcher["Launcher (viber://chat?number=...)"]
+        FlockMutex --> ATSPI["Direct D-Bus AT-SPI Reader"]
+        FlockMutex --> X11Input["X11 Clipboard & xdotool"]
+        FlockMutex --> RecipientGate["Dynamic Recipient Gate ('isn't on Viber')"]
     end
     
     Launcher -->|IPC| ViberApp["Viber Desktop (Qt / X11)"]
     X11Input -->|Ctrl+V / Return| ViberApp
     ViberApp -->|Accessible Tree| ATSPI
-    ViberApp -->|Frame Buffer| VisualCheck
+    ViberApp -->|Readback| RecipientGate
 ```
 
 ### 1. Direct D-Bus Accessibility (No OCR Latency)

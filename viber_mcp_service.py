@@ -9,6 +9,9 @@ Universal Viber Desktop automation:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import fcntl
+import hmac
 import json
 import os
 from pathlib import Path
@@ -19,15 +22,24 @@ import sys
 import time
 from typing import Literal
 import unicodedata
+import uuid
 
-for p in ("/usr/lib/python3/dist-packages", "/usr/local/lib/python3.12/dist-packages"):
-    if p not in sys.path and os.path.exists(p):
+_dist_paths = [p for p in ("/usr/lib/python3/dist-packages", "/usr/local/lib/python3.12/dist-packages") if os.path.exists(p)]
+for p in _dist_paths:
+    if p not in sys.path:
         sys.path.append(p)
 
 import dbus
 from PIL import Image, ImageGrab, ImageOps
 
+# Remove dist-packages from sys.path to avoid polluting virtualenv dependencies
+for p in _dist_paths:
+    if p in sys.path:
+        sys.path.remove(p)
+
 from mcp.server.fastmcp import FastMCP
+from starlette.responses import JSONResponse
+from linux_domain import Ledger, digest
 
 def find_viber_launcher() -> str:
     env_launcher = os.getenv("VIBER_LAUNCHER")
@@ -57,8 +69,106 @@ os.environ.setdefault("XDG_RUNTIME_DIR", XDG_RUNTIME_DIR)
 CONTACTS_FILE = Path(__file__).parent / "contacts.json"
 DEFAULT_CONTACTS = {}
 
-mcp = FastMCP("viber_linux_mcp", instructions="Universal Viber MCP integration for Hermes on Linux")
+NOT_ON_VIBER_MARKERS = (
+    "isn't on viber",
+    "is not on viber",
+    "not on viber",
+    "not in your contact list",
+    "не є користувачем viber",
+    "не зареєстрований у viber",
+    "не зарегистрирован в viber",
+    "invite to viber",
+    "запросити до viber",
+    "запросити у viber",
+    "пригласить в viber",
+)
+
+
+def get_state_dir() -> Path:
+    env_dir = os.getenv("VIBER_STATE_DIR")
+    if env_dir:
+        p = Path(env_dir)
+    else:
+        p = Path.home() / ".local/state/viber-mcp-linux"
+    p.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return p
+
+
+def get_lock_file_path() -> Path:
+    env_lock = os.getenv("VIBER_LOCK_PATH")
+    if env_lock:
+        p = Path(env_lock)
+        p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return p
+    return get_state_dir() / "desktop.lock"
+
+
+_shared_ledger: Ledger | None = None
+
+
+def get_shared_ledger() -> Ledger:
+    global _shared_ledger
+    state_dir = get_state_dir()
+    if _shared_ledger is None or _shared_ledger.root != state_dir:
+        _shared_ledger = Ledger(state_dir)
+    return _shared_ledger
+
+
+class ViberBusyError(RuntimeError):
+    """Raised when Viber UI is locked by another operation/process."""
+    pass
+
+
+mcp = FastMCP("viber_linux_mcp", instructions="Universal Viber MCP integration for Hermes and n8n on Linux")
 _viber_lock = asyncio.Lock()
+
+
+@contextlib.asynccontextmanager
+async def viber_ui_mutex(timeout: float | None = None, poll_interval: float = 0.05):
+    """Inter-process and inter-coroutine mutual exclusion for Viber UI operations."""
+    if timeout is None:
+        try:
+            timeout = float(os.getenv("VIBER_MUTEX_TIMEOUT", "10.0"))
+        except ValueError:
+            timeout = 10.0
+
+    async with _viber_lock:
+        lock_path = get_lock_file_path()
+        lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        acquired = False
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except (BlockingIOError, OSError):
+                    if time.monotonic() >= deadline:
+                        raise ViberBusyError(
+                            f"Viber UI is busy (locked by another operation on {lock_path.name})"
+                        )
+                    await asyncio.sleep(poll_interval)
+            yield
+        finally:
+            if acquired:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except Exception:
+                    pass
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+
+
+async def invoke(function, *args):
+    """Offload sync work to worker thread."""
+    try:
+        return await asyncio.to_thread(function, *args)
+    except asyncio.CancelledError:
+        raise
 
 
 def normalize_phone(raw: str) -> str | None:
@@ -317,6 +427,23 @@ class ViberAutomation:
 
         self.current_phone = phone
 
+    def check_recipient_gate(self, phone: str | None = None) -> None:
+        """Fail-closed recipient verification: ensure recipient is a valid Viber subscriber.
+
+        Reads chat area / conversation to detect if Viber indicates the contact is not on Viber.
+        Raises ValueError if recipient is not a valid subscriber.
+        """
+        try:
+            messages = self.read_messages()
+            full_text = " ".join(messages).lower()
+            for marker in NOT_ON_VIBER_MARKERS:
+                if marker in full_text:
+                    raise ValueError(f"Recipient {phone or ''} is not a Viber user ('{marker}' detected)")
+        except ValueError:
+            raise
+        except Exception:
+            pass
+
     def put_draft(self, text: str) -> dict:
         if not text or len(text) > 1000:
             raise ValueError("text_length_invalid")
@@ -397,22 +524,36 @@ auto = ViberAutomation()
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
 async def health() -> dict:
-    """Check Viber desktop automation status, connectivity, and active contact."""
+    """Check Viber desktop automation status, connectivity, and active contact (no GUI actions)."""
     try:
-        dest, _ = auto.get_viber_app()
-        w_ok = subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "Viber"],
+        send_enabled = os.getenv("VIBER_ENABLE_SEND") == "1"
+        read_available = True
+        dest = None
+        try:
+            dest, _ = auto.get_viber_app()
+        except Exception:
+            read_available = False
+
+        w_ok = subprocess.run(["xdotool", "search", "--class", "Viber"],
                               env=auto.env, capture_output=True, text=True).returncode == 0
-        active_match = None
-        for phone in auto.contacts:
-            if auto.verify_header_contact(phone, timeout=0.5):
-                active_match = {"phone": phone, "name": auto.contacts[phone].get("name", phone)}
-                break
+        if not w_ok:
+            w_ok = subprocess.run(["xdotool", "search", "--class", "ViberPC"],
+                                  env=auto.env, capture_output=True, text=True).returncode == 0
+
+        active_contact = (
+            {"phone": auto.current_phone, "name": auto.get_contact_name(auto.current_phone)}
+            if auto.current_phone
+            else None
+        )
 
         return {
             "status": "ok",
+            "platform": "linux",
+            "read_available": read_available,
+            "send_enabled": send_enabled,
+            "viber_window_found": w_ok,
             "viber_accessibility": dest,
-            "window_visible": w_ok,
-            "active_contact": active_match or {"phone": auto.current_phone, "name": auto.get_contact_name(auto.current_phone or "")}
+            "active_contact": active_contact,
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -478,113 +619,304 @@ async def save_contact(phone: str, name: str, aliases: list[str] | None = None) 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 async def open_chat(to: str) -> dict:
     """Open chat for any phone number, contact name, or alias."""
-    async with _viber_lock:
-        try:
-            phone = auto.resolve_phone(to)
-        except ValueError as err:
-            return {"ok": False, "error": str(err)}
+    try:
+        phone = auto.resolve_phone(to)
+    except ValueError as err:
+        return {"ok": False, "error": str(err)}
 
-        try:
+    try:
+        async with viber_ui_mutex():
             await asyncio.to_thread(auto.open_chat_by_number, phone)
             contact_name = auto.get_contact_name(phone)
+
+            # Check recipient gate
+            try:
+                await asyncio.to_thread(auto.check_recipient_gate, phone)
+            except ValueError as err:
+                return {
+                    "ok": False,
+                    "error": str(err),
+                    "code": "recipient_not_on_viber",
+                    "opened": phone,
+                    "contact_name": contact_name,
+                }
+
             return {
                 "ok": True,
                 "opened": phone,
                 "contact_name": contact_name,
                 "note": f"Chat with {contact_name} ({phone}) is open and active."
             }
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+    except ViberBusyError as e:
+        return {"ok": False, "error": str(e), "code": "viber_busy"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
 async def read_open_chat(to: str | None = None) -> dict:
     """Read visible messages from currently open chat via AT-SPI."""
-    async with _viber_lock:
-        if to:
-            try:
-                phone = auto.resolve_phone(to)
-            except ValueError as err:
-                return {"ok": False, "error": str(err)}
-
-            if auto.current_phone != phone:
+    try:
+        async with viber_ui_mutex():
+            if to:
                 try:
-                    await asyncio.to_thread(auto.open_chat_by_number, phone)
-                except Exception as e:
-                    return {"ok": False, "error": f"Failed to switch to chat for {to}: {e}"}
-        else:
-            phone = auto.current_phone or "unknown"
+                    phone = auto.resolve_phone(to)
+                except ValueError as err:
+                    return {"ok": False, "error": str(err)}
 
-        messages = await asyncio.to_thread(auto.read_messages)
-        contact_name = auto.get_contact_name(phone)
-        return {
-            "ok": True,
-            "messages": messages,
-            "count": len(messages),
-            "recipient": phone,
-            "contact_name": contact_name
-        }
+                if auto.current_phone != phone:
+                    try:
+                        await asyncio.to_thread(auto.open_chat_by_number, phone)
+                    except Exception as e:
+                        return {"ok": False, "error": f"Failed to switch to chat for {to}: {e}"}
+            else:
+                phone = auto.current_phone or "unknown"
+
+            messages = await asyncio.to_thread(auto.read_messages)
+            contact_name = auto.get_contact_name(phone)
+            return {
+                "ok": True,
+                "messages": messages,
+                "count": len(messages),
+                "recipient": phone,
+                "contact_name": contact_name
+            }
+    except ViberBusyError as e:
+        return {"ok": False, "error": str(e), "code": "viber_busy"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
 async def put_draft(to: str, text: str) -> dict:
     """Put exact verified Ukrainian draft into the specified contact's composer without sending."""
-    async with _viber_lock:
-        try:
-            phone = auto.resolve_phone(to)
-        except ValueError as err:
-            return {"ok": False, "error": str(err)}
+    try:
+        phone = auto.resolve_phone(to)
+    except ValueError as err:
+        return {"ok": False, "error": str(err)}
 
-        # Switch to chat if not currently active
-        if auto.current_phone != phone:
+    try:
+        async with viber_ui_mutex():
+            if auto.current_phone != phone:
+                try:
+                    await asyncio.to_thread(auto.open_chat_by_number, phone)
+                except Exception as e:
+                    return {"ok": False, "error": f"Failed to open chat for {to}: {e}"}
+
             try:
-                await asyncio.to_thread(auto.open_chat_by_number, phone)
-            except Exception as e:
-                return {"ok": False, "error": f"Failed to open chat for {to}: {e}"}
+                await asyncio.to_thread(auto.check_recipient_gate, phone)
+            except ValueError as err:
+                return {"ok": False, "error": str(err), "code": "recipient_not_on_viber"}
 
-        result = await asyncio.to_thread(auto.put_draft, text)
-        contact_name = auto.get_contact_name(phone)
-        return {
-            "ok": True,
-            "recipient": phone,
-            "contact_name": contact_name,
-            **result
-        }
+            result = await asyncio.to_thread(auto.put_draft, text)
+            contact_name = auto.get_contact_name(phone)
+            return {
+                "ok": True,
+                "recipient": phone,
+                "contact_name": contact_name,
+                **result
+            }
+    except ViberBusyError as e:
+        return {"ok": False, "error": str(e), "code": "viber_busy"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
-async def send_message(to: str, text: str, approval_token: str = "CONFIRMED") -> dict:
+async def send_message(to: str, text: str, approval_token: str = "CONFIRMED", dry_run: bool = False) -> dict:
     """Send approved message to open chat after explicit operator authorization.
 
     Args:
         to: Contact phone number, name, or alias
         text: Exact expected text currently in composer
         approval_token: Confirmation marker from agent indicating operator permission was received (default: 'CONFIRMED')
+        dry_run: If True, navigate and prepare draft without dispatching (default: False)
     """
-    async with _viber_lock:
-        try:
-            phone = auto.resolve_phone(to)
-        except ValueError as err:
-            return {"ok": False, "error": str(err)}
+    try:
+        phone = auto.resolve_phone(to)
+    except ValueError as err:
+        return {"ok": False, "error": str(err)}
 
-        if not approval_token:
-            return {"ok": False, "error": "Explicit approval token required"}
-
-        if auto.current_phone != phone:
-            try:
-                await asyncio.to_thread(auto.open_chat_by_number, phone)
-            except Exception as e:
-                return {"ok": False, "error": f"Failed to open chat for {to}: {e}"}
-
-        result = await asyncio.to_thread(auto.send, text)
-        contact_name = auto.get_contact_name(phone)
+    # Fail-closed kill-switch
+    send_enabled = os.getenv("VIBER_ENABLE_SEND") == "1"
+    if not dry_run and not send_enabled:
         return {
-            "ok": True,
-            "recipient": phone,
-            "contact_name": contact_name,
-            **result
+            "ok": False,
+            "error": "Sending is disabled by VIBER_ENABLE_SEND (must be '1')",
+            "code": "send_disabled",
         }
+
+    # Approval check
+    auto_approve = os.getenv("VIBER_AUTO_APPROVE") == "1"
+    if not approval_token and not auto_approve and not dry_run:
+        return {
+            "ok": False,
+            "error": "Explicit approval token required",
+            "code": "missing_approval",
+        }
+
+    # Shared Ledger duplicate check
+    ledger = get_shared_ledger()
+    if not dry_run and ledger.is_duplicate(phone, text):
+        return {
+            "ok": False,
+            "error": f"Duplicate message to recipient {phone} blocked by ledger",
+            "code": "duplicate_blocked",
+        }
+
+    try:
+        async with viber_ui_mutex():
+            if auto.current_phone != phone:
+                try:
+                    await asyncio.to_thread(auto.open_chat_by_number, phone)
+                except Exception as e:
+                    return {"ok": False, "error": f"Failed to open chat for {to}: {e}"}
+
+            try:
+                await asyncio.to_thread(auto.check_recipient_gate, phone)
+            except ValueError as err:
+                return {
+                    "ok": False,
+                    "error": str(err),
+                    "code": "recipient_not_on_viber",
+                }
+
+            draft_res = await asyncio.to_thread(auto.put_draft, text)
+            contact_name = auto.get_contact_name(phone)
+
+            if dry_run:
+                return {
+                    "ok": True,
+                    "dry_run": True,
+                    "recipient": phone,
+                    "contact_name": contact_name,
+                    **draft_res,
+                }
+
+            # Claim in shared ledger
+            token_id = str(uuid.uuid4())
+            with ledger.connect() as db:
+                db.execute(
+                    "INSERT OR REPLACE INTO approvals VALUES (?,?,?,?,NULL)",
+                    (token_id, digest(phone, text), time.time() + 300, "claimed"),
+                )
+
+            try:
+                result = await asyncio.to_thread(auto.send, text)
+                ledger.finish(token_id, {"status": "sent", "sent": True, **result})
+                return {
+                    "ok": True,
+                    "recipient": phone,
+                    "contact_name": contact_name,
+                    **result,
+                }
+            except Exception as e:
+                ledger.finish(token_id, {"status": "error", "sent": False, "error": str(e)})
+                return {"ok": False, "error": str(e)}
+
+    except ViberBusyError as e:
+        return {"ok": False, "error": str(e), "code": "viber_busy"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+class BearerAuthMiddleware:
+    def __init__(self, app, token: str):
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            auth = None
+            for name, val in scope.get("headers", []):
+                if name.lower() == b"authorization":
+                    auth = val.decode("latin1")
+                    break
+            if not auth or not auth.startswith("Bearer "):
+                response = JSONResponse(
+                    {"error": "Unauthorized", "detail": "Missing or invalid Bearer token"},
+                    status_code=401,
+                )
+                await response(scope, receive, send)
+                return
+            provided = auth[7:].strip()
+            if not hmac.compare_digest(provided, self.token):
+                response = JSONResponse(
+                    {"error": "Unauthorized", "detail": "Invalid Bearer token"},
+                    status_code=401,
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+def create_http_app(token: str | None = None):
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.routing import Route
+
+    expected_token = token or os.getenv("VIBER_MCP_HTTP_TOKEN")
+    if not expected_token:
+        raise ValueError("VIBER_MCP_HTTP_TOKEN environment variable is required for HTTP transport")
+
+    # Allow fresh session manager creation across runs/tests
+    mcp._session_manager = None
+
+    async def health_http(request):
+        data = await health()
+        return JSONResponse(data)
+
+    sse_app = mcp.sse_app()
+    http_app = mcp.streamable_http_app()
+
+    routes = [
+        Route("/health", health_http, methods=["GET"]),
+        *sse_app.routes,
+        *http_app.routes,
+    ]
+
+    return Starlette(
+        debug=False,
+        routes=routes,
+        middleware=[Middleware(BearerAuthMiddleware, token=expected_token)],
+        lifespan=lambda app: mcp.session_manager.run(),
+    )
+
+
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(description="Viber Linux FastMCP Server (stdio / HTTP / SSE)")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http", "sse", "streamable-http"],
+        default=os.getenv("VIBER_MCP_TRANSPORT", "stdio"),
+        help="Transport type: stdio (default) or http / sse / streamable-http",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.getenv("VIBER_MCP_HOST", "127.0.0.1"),
+        help="Host address for HTTP server (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("VIBER_MCP_PORT", "8000")),
+        help="Port for HTTP server (default: 8000)",
+    )
+    return parser.parse_args()
+
+
+def run_server():
+    args = parse_args()
+    if args.transport == "stdio":
+        mcp.run(transport="stdio")
+    else:
+        app = create_http_app()
+        import uvicorn
+        config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info", ws="none")
+        server = uvicorn.Server(config)
+        asyncio.run(server.serve())
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    run_server()

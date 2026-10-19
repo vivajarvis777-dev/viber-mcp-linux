@@ -48,7 +48,7 @@ def test_health_endpoint_auth(http_app):
 async def test_streamable_http_e2e_tools():
     app = linux_server.create_http_app(TEST_TOKEN)
     port = 19876
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="none")
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
     await asyncio.sleep(0.3)
@@ -84,7 +84,7 @@ async def test_streamable_http_e2e_tools():
 async def test_sse_e2e_tools():
     app = linux_server.create_http_app(TEST_TOKEN)
     port = 19877
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="none")
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
     await asyncio.sleep(0.3)
