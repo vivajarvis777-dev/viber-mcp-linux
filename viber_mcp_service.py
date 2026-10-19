@@ -450,7 +450,8 @@ class ViberAutomation:
         dest, _ = self.get_viber_app()
         editor_path, _ext = self.resolve_editor()
         editor = bus.get_object(dest, editor_path)
-        return str(editor.GetText(0, -1, dbus_interface="org.a11y.atspi.Text"))
+        raw = str(editor.GetText(0, -1, dbus_interface="org.a11y.atspi.Text"))
+        return raw.replace("\u2029", "\n")
 
     def focus_editor(self):
         bus = self.get_a11y_bus()
@@ -494,7 +495,7 @@ class ViberAutomation:
                         for child in children:
                             queue.append((child[0], child[1]))
                         continue
-                    t = str(obj.GetText(0, -1, dbus_interface="org.a11y.atspi.Text")).strip()
+                    t = str(obj.GetText(0, -1, dbus_interface="org.a11y.atspi.Text")).replace("\u2028", "\n").replace("\u2029", "\n").strip()
                     if t and t not in messages:
                         messages.append(t)
             except Exception:
@@ -572,12 +573,15 @@ class ViberAutomation:
     def put_draft(self, text: str) -> dict:
         if not text or len(text) > 1000:
             raise ValueError("text_length_invalid")
-        if any(unicodedata.category(c).startswith("C") or c in "\n\r\t" for c in text):
-            raise ValueError("single_line_text_required")
+
+        clean_text = text.replace("\r\n", "\n").replace("\r", "\n")
+        # Forbid non-printable control characters, but allow \n
+        if any(unicodedata.category(c).startswith("C") and c != "\n" for c in clean_text):
+            raise ValueError("invalid_control_characters")
 
         current = self.get_editor_text()
         norm_cur = unicodedata.normalize("NFC", current).replace("\ufe0f", "")
-        norm_tx = unicodedata.normalize("NFC", text).replace("\ufe0f", "")
+        norm_tx = unicodedata.normalize("NFC", clean_text).replace("\ufe0f", "")
 
         if current and norm_cur != norm_tx:
             raise RuntimeError(f"Existing draft present in editor: {current!r}. Clear or send it first.")
@@ -585,34 +589,34 @@ class ViberAutomation:
         if norm_cur == norm_tx:
             return {"drafted": True, "verified": True, "text": current}
 
-        self.focus_editor()
+        # Set text atomically via AT-SPI without clipboard or modifier keys
+        bus = self.get_a11y_bus()
+        dest, _ = self.get_viber_app()
+        editor_path, _ext = self.resolve_editor()
+        editor = bus.get_object(dest, editor_path)
+        try:
+            ok = editor.SetTextContents(clean_text, dbus_interface="org.a11y.atspi.EditableText")
+            if not ok:
+                raise RuntimeError("SetTextContents returned False")
+        except Exception as e:
+            raise RuntimeError(f"AT-SPI SetTextContents failed: {e}")
 
-        # Set clipboard via xclip
-        p = subprocess.Popen(["xclip", "-selection", "clipboard"],
-                             env=self.env, stdin=subprocess.PIPE,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        p.communicate(input=text.encode("utf-8"))
-        if p.returncode != 0:
-            raise RuntimeError("xclip failed to set clipboard")
-
-        # Paste Ctrl+V
-        subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+v"],
-                       env=self.env, check=True, timeout=3)
-        time.sleep(0.3)
+        time.sleep(0.1)
 
         readback = self.get_editor_text()
         norm_rb = unicodedata.normalize("NFC", readback).replace("\ufe0f", "")
-        if readback != text and norm_rb != norm_tx:
-            raise RuntimeError(f"Draft verification failed: expected {text!r}, got {readback!r}")
+        if readback != clean_text and norm_rb != norm_tx:
+            raise RuntimeError(f"Draft verification failed: expected {clean_text!r}, got {readback!r}")
 
         return {"drafted": True, "verified": True, "text": readback}
 
     def send(self, expected_text: str) -> dict:
+        clean_expected = expected_text.replace("\r\n", "\n").replace("\r", "\n")
         current = self.get_editor_text()
         norm_cur = unicodedata.normalize("NFC", current).replace("\ufe0f", "").strip()
-        norm_exp = unicodedata.normalize("NFC", expected_text).replace("\ufe0f", "").strip()
-        if current != expected_text and norm_cur != norm_exp:
-            raise RuntimeError(f"Composer text mismatch before send: expected {expected_text!r}, got {current!r}")
+        norm_exp = unicodedata.normalize("NFC", clean_expected).replace("\ufe0f", "").strip()
+        if current != clean_expected and norm_cur != norm_exp:
+            raise RuntimeError(f"Composer text mismatch before send: expected {clean_expected!r}, got {current!r}")
 
         self.focus_editor()
         subprocess.run(["xdotool", "key", "--clearmodifiers", "Return"],
@@ -638,7 +642,7 @@ class ViberAutomation:
         # Verify message in history
         messages = self.read_messages()
         found = any(
-            expected_text in m or norm_exp in unicodedata.normalize("NFC", m).replace("\ufe0f", "")
+            clean_expected in m or norm_exp in unicodedata.normalize("NFC", m).replace("\ufe0f", "")
             for m in messages
         )
         if not found:
