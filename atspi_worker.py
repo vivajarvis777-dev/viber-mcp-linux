@@ -38,7 +38,8 @@ def run(req, Atspi):
         interface = node.get_text_iface()
         if interface is None:
             raise RuntimeError('text interface required')
-        return Atspi.Text.get_text(interface, 0, Atspi.Text.get_character_count(interface))
+        raw = Atspi.Text.get_text(interface, 0, Atspi.Text.get_character_count(interface))
+        return raw.replace('\u2029', '\n').replace('\u2028', '\n')
     def write(node, value):
         if not showing(node):
             raise RuntimeError('editable target not visible')
