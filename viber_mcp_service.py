@@ -198,8 +198,10 @@ class ViberAutomation:
             XDG_RUNTIME_DIR=XDG_RUNTIME_DIR,
         )
         self._a11y_bus = None
-        self._editor_path = "/org/a11y/atspi/accessible/2147483740"
-        self._send_btn_path = "/org/a11y/atspi/accessible/2147483904"
+        # AT-SPI object paths are reassigned by Viber on every restart, so they must be
+        # resolved from the live accessibility tree (see resolve_editor / resolve_send_button).
+        self._editor_path = None
+        self._send_btn_path = None
         self.current_phone: str | None = None
         self.contacts = self._load_contacts()
 
@@ -292,6 +294,110 @@ class ViberAutomation:
                 continue
         raise RuntimeError("Viber accessibility application not found")
 
+    # --- Live AT-SPI resolution -------------------------------------------------
+    # Viber reassigns accessibility object paths on every restart, so the composer and
+    # the send button can only be located semantically from the current tree.
+
+    EDITABLE_STATE_BIT = 1 << 12  # AT-SPI STATE_EDITABLE
+
+    @staticmethod
+    def _obj_extents(obj):
+        try:
+            e = obj.GetExtents(0, dbus_interface="org.a11y.atspi.Component")
+            ext = (int(e[0]), int(e[1]), int(e[2]), int(e[3]))
+        except Exception:
+            return None
+        if ext[2] <= 0 or ext[3] <= 0:
+            return None
+        return ext
+
+    @staticmethod
+    def _obj_states(obj) -> int:
+        try:
+            state = obj.Get(
+                "org.a11y.atspi.Accessible",
+                "State",
+                dbus_interface="org.freedesktop.DBus.Properties",
+            )
+            return int(state[0])
+        except Exception:
+            return 0
+
+    def _walk_accessible(self):
+        """Yield (object, path) for every node under the Viber accessibility root."""
+        bus = self.get_a11y_bus()
+        dest, app_path = self.get_viber_app()
+        queue = [(dest, app_path)]
+        seen = set()
+        while queue:
+            d, p = queue.pop(0)
+            if (d, p) in seen:
+                continue
+            seen.add((d, p))
+            obj = bus.get_object(d, p)
+            try:
+                children = obj.GetChildren(dbus_interface="org.a11y.atspi.Accessible")
+            except Exception:
+                children = []
+            yield obj, p
+            for child in children:
+                queue.append((child[0], child[1]))
+
+    def resolve_editor(self) -> tuple[str, tuple[int, int, int, int]]:
+        """Locate the message composer: a visible, editable text node.
+
+        The composer is the widest visible editable text field in the window, which
+        distinguishes it from the (narrower, non-editable) search box.
+        """
+        best_path = None
+        best_ext = None
+        for obj, path in self._walk_accessible():
+            try:
+                role = str(obj.GetRoleName(dbus_interface="org.a11y.atspi.Accessible"))
+            except Exception:
+                continue
+            if role != "text":
+                continue
+            if not (self._obj_states(obj) & self.EDITABLE_STATE_BIT):
+                continue
+            ext = self._obj_extents(obj)
+            if ext is None:
+                continue
+            if best_ext is None or ext[2] > best_ext[2]:
+                best_path, best_ext = path, ext
+        if best_path is None or best_ext is None:
+            raise RuntimeError(
+                "Viber composer not found: no visible editable text node in the accessibility tree"
+            )
+        self._editor_path = best_path
+        return best_path, best_ext
+
+    def resolve_send_button(self, editor_ext) -> str | None:
+        """Locate the send button: a visible push button right of the composer, same row."""
+        ex, ey, ew, eh = editor_ext
+        best_path = None
+        best_gap = None
+        for obj, path in self._walk_accessible():
+            try:
+                role = str(obj.GetRoleName(dbus_interface="org.a11y.atspi.Accessible"))
+            except Exception:
+                continue
+            if role != "push button":
+                continue
+            ext = self._obj_extents(obj)
+            if ext is None:
+                continue
+            bx, by, bw, bh = ext
+            if bx < ex + ew - 8:
+                continue
+            if by + bh <= ey or by >= ey + eh:
+                continue
+            gap = bx - (ex + ew)
+            if best_gap is None or gap < best_gap:
+                best_gap, best_path = gap, path
+        self._send_btn_path = best_path
+        return best_path
+
     def get_window_geometry(self) -> tuple[int, int, int, int]:
         out = subprocess.check_output(
             ["xdotool", "search", "--onlyvisible", "--class", "Viber"],
@@ -342,16 +448,20 @@ class ViberAutomation:
     def get_editor_text(self) -> str:
         bus = self.get_a11y_bus()
         dest, _ = self.get_viber_app()
-        editor = bus.get_object(dest, self._editor_path)
+        editor_path, _ext = self.resolve_editor()
+        editor = bus.get_object(dest, editor_path)
         return str(editor.GetText(0, -1, dbus_interface="org.a11y.atspi.Text"))
 
     def focus_editor(self):
         bus = self.get_a11y_bus()
         dest, _ = self.get_viber_app()
-        editor = bus.get_object(dest, self._editor_path)
-        editor.DoAction(0, dbus_interface="org.a11y.atspi.Action")
-        extents = editor.GetExtents(0, dbus_interface="org.a11y.atspi.Component")
-        x, y, w, h = int(extents[0]), int(extents[1]), int(extents[2]), int(extents[3])
+        editor_path, extents = self.resolve_editor()
+        editor = bus.get_object(dest, editor_path)
+        try:
+            editor.DoAction(0, dbus_interface="org.a11y.atspi.Action")
+        except Exception:
+            pass
+        x, y, w, h = extents
         subprocess.run(["xdotool", "mousemove", str(x + w // 2), str(y + h // 2), "click", "1"],
                        env=self.env, check=True, timeout=3)
         time.sleep(0.1)
@@ -359,16 +469,31 @@ class ViberAutomation:
     def read_messages(self) -> list[str]:
         bus = self.get_a11y_bus()
         dest, app_path = self.get_viber_app()
+        try:
+            editor_path, editor_ext = self.resolve_editor()
+        except Exception:
+            editor_path, editor_ext = None, None
         queue = [(dest, app_path)]
         messages = []
         while queue:
             d, p = queue.pop(0)
-            if p in (self._editor_path, "/org/a11y/atspi/accessible/2147483789"):
-                continue  # skip composer and search box
+            if editor_path is not None and p == editor_path:
+                continue  # skip the composer itself
             obj = bus.get_object(d, p)
             try:
                 role = obj.GetRoleName(dbus_interface="org.a11y.atspi.Accessible")
                 if role in ("text", "entry", "paragraph"):
+                    ext = self._obj_extents(obj)
+                    if ext is None:
+                        # Hidden/collapsed node: contributes neither history nor composer text.
+                        children = []
+                        try:
+                            children = obj.GetChildren(dbus_interface="org.a11y.atspi.Accessible")
+                        except Exception:
+                            pass
+                        for child in children:
+                            queue.append((child[0], child[1]))
+                        continue
                     t = str(obj.GetText(0, -1, dbus_interface="org.a11y.atspi.Text")).strip()
                     if t and t not in messages:
                         messages.append(t)
@@ -496,13 +621,16 @@ class ViberAutomation:
 
         after = self.get_editor_text()
         if after != "":
-            # Try send button fallback
+            # Try send button fallback, resolved from the live tree.
             bus = self.get_a11y_bus()
             dest, _ = self.get_viber_app()
-            btn = bus.get_object(dest, self._send_btn_path)
-            btn.DoAction(0, dbus_interface="org.a11y.atspi.Action")
-            time.sleep(0.5)
-            after = self.get_editor_text()
+            _editor_path, editor_ext = self.resolve_editor()
+            btn_path = self.resolve_send_button(editor_ext)
+            if btn_path:
+                btn = bus.get_object(dest, btn_path)
+                btn.DoAction(0, dbus_interface="org.a11y.atspi.Action")
+                time.sleep(0.5)
+                after = self.get_editor_text()
 
         if after != "":
             raise RuntimeError("Message was not cleared from editor after send attempt")
