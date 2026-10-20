@@ -867,9 +867,11 @@ async def open_chat(to: str) -> dict:
                 "note": f"Chat with {contact_name} ({phone}) is open and active."
             }
     except ViberBusyError as e:
-        return {"ok": False, "error": str(e), "code": "viber_busy"}
+        return {"ok": False, "error": str(e), "code": "viber_busy", "can_retry": True,
+                "idempotency_key": clean_key}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), "code": "send_unknown_error", "can_retry": False,
+                "idempotency_key": clean_key}
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
@@ -901,9 +903,11 @@ async def read_open_chat(to: str | None = None) -> dict:
                 "contact_name": contact_name
             }
     except ViberBusyError as e:
-        return {"ok": False, "error": str(e), "code": "viber_busy"}
+        return {"ok": False, "error": str(e), "code": "viber_busy", "can_retry": True,
+                "idempotency_key": clean_key}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), "code": "send_unknown_error", "can_retry": False,
+                "idempotency_key": clean_key}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
@@ -936,9 +940,11 @@ async def put_draft(to: str, text: str) -> dict:
                 **result
             }
     except ViberBusyError as e:
-        return {"ok": False, "error": str(e), "code": "viber_busy"}
+        return {"ok": False, "error": str(e), "code": "viber_busy", "can_retry": True,
+                "idempotency_key": clean_key}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), "code": "send_unknown_error", "can_retry": False,
+                "idempotency_key": clean_key}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
@@ -958,10 +964,12 @@ async def send_message(
         dry_run: If True, navigate and prepare draft without dispatching (default: False)
         idempotency_key: Optional unique identifier (e.g. invoice_id) guaranteeing strictly single execution
     """
+    clean_key = idempotency_key.strip() if idempotency_key else ""
     try:
         phone = auto.resolve_phone(to)
     except ValueError as err:
-        return {"ok": False, "error": str(err)}
+        return {"ok": False, "error": str(err), "code": "invalid_recipient",
+                "can_retry": False, "idempotency_key": clean_key}
 
     # Fail-closed kill-switch
     send_enabled = os.getenv("VIBER_ENABLE_SEND") == "1"
@@ -970,6 +978,8 @@ async def send_message(
             "ok": False,
             "error": "Sending is disabled by VIBER_ENABLE_SEND (must be '1')",
             "code": "send_disabled",
+            "can_retry": True,
+            "idempotency_key": clean_key,
         }
 
     # Approval check
@@ -979,10 +989,11 @@ async def send_message(
             "ok": False,
             "error": "Explicit approval token required",
             "code": "missing_approval",
+            "can_retry": False,
+            "idempotency_key": clean_key,
         }
 
     ledger = get_shared_ledger()
-    clean_key = idempotency_key.strip() if idempotency_key else ""
 
     # Pre-check fast-path: if idempotency_key is already completed, return cached result immediately
     if not dry_run and clean_key:
@@ -1005,6 +1016,8 @@ async def send_message(
                     "ok": False,
                     "error": f"Operation for idempotency_key {clean_key} already in progress or completed ({state})",
                     "code": "duplicate_idempotency_key",
+                    "idempotency_key": clean_key,
+                    "can_retry": False,
                 }
 
     # Pre-check fast-path (before acquiring mutex)
@@ -1013,6 +1026,8 @@ async def send_message(
             "ok": False,
             "error": f"Duplicate message to recipient {phone} blocked by ledger",
             "code": "duplicate_blocked",
+            "idempotency_key": clean_key,
+            "can_retry": False,
         }
 
     try:
@@ -1041,6 +1056,8 @@ async def send_message(
                                 "ok": False,
                                 "error": f"Operation for idempotency_key {token_id} already in progress or completed ({state})",
                                 "code": "duplicate_idempotency_key",
+                                "idempotency_key": token_id,
+                                "can_retry": False,
                             }
 
                 if ledger.is_duplicate(phone, text, current_token=token_id):
@@ -1048,6 +1065,8 @@ async def send_message(
                         "ok": False,
                         "error": f"Duplicate message to recipient {phone} blocked by ledger",
                         "code": "duplicate_blocked",
+                        "idempotency_key": token_id,
+                        "can_retry": False,
                     }
 
             if auto.current_phone != phone:
@@ -1059,6 +1078,7 @@ async def send_message(
                         "error": f"Failed to open chat for {to}: {e}",
                         "code": "send_failed_pre_dispatch",
                         "can_retry": True,
+                        "idempotency_key": token_id,
                     }
 
             try:
@@ -1069,6 +1089,7 @@ async def send_message(
                     "error": str(err),
                     "code": "recipient_not_on_viber",
                     "can_retry": False,
+                    "idempotency_key": token_id,
                 }
 
             try:
@@ -1079,6 +1100,7 @@ async def send_message(
                     "error": str(e),
                     "code": "send_failed_pre_dispatch",
                     "can_retry": True,
+                    "idempotency_key": token_id,
                 }
 
             contact_name = auto.get_contact_name(phone)
@@ -1089,6 +1111,7 @@ async def send_message(
                     "dry_run": True,
                     "recipient": phone,
                     "contact_name": contact_name,
+                    "idempotency_key": clean_key,
                     **draft_res,
                 }
 
@@ -1132,9 +1155,11 @@ async def send_message(
                         "idempotency_key": token_id}
 
     except ViberBusyError as e:
-        return {"ok": False, "error": str(e), "code": "viber_busy"}
+        return {"ok": False, "error": str(e), "code": "viber_busy", "can_retry": True,
+                "idempotency_key": clean_key}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": str(e), "code": "send_unknown_error", "can_retry": False,
+                "idempotency_key": clean_key}
 
 
 class BearerAuthMiddleware:
