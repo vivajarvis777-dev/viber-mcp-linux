@@ -1107,6 +1107,7 @@ async def send_message(
                     "recipient": phone,
                     "contact_name": contact_name,
                     "token_id": token_id,
+                    "idempotency_key": token_id,
                     **result,
                 }
             except ViberDispatchUnconfirmedError as e:
@@ -1123,10 +1124,12 @@ async def send_message(
                     "code": "send_unconfirmed",
                     "can_retry": False,
                     "token_id": token_id,
+                    "idempotency_key": token_id,
                 }
             except Exception as e:
                 ledger.finish(token_id, {"status": "error", "sent": False, "can_retry": True, "error": str(e)})
-                return {"ok": False, "error": str(e), "code": "send_failed_pre_dispatch", "can_retry": True}
+                return {"ok": False, "error": str(e), "code": "send_failed_pre_dispatch", "can_retry": True,
+                        "idempotency_key": token_id}
 
     except ViberBusyError as e:
         return {"ok": False, "error": str(e), "code": "viber_busy"}
