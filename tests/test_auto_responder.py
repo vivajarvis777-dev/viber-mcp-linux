@@ -24,7 +24,7 @@ from viber_auto_responder import (
     get_auto_responder,
 )
 import viber_mcp_service
-from viber_mcp_service import health
+from viber_mcp_service import health, ViberDispatchUnconfirmedError
 
 
 class MockAutomation:
@@ -255,3 +255,35 @@ async def test_health_reports_auto_responder_status(tmp_path, monkeypatch):
     assert "running" in ar
     assert "cooldown_hours" in ar
     assert "stats" in ar
+
+
+def test_auto_responder_unconfirmed_dispatch_locks_cooldown(tmp_path, monkeypatch):
+    """Verify that an unconfirmed dispatch in auto-responder locks cooldown to prevent spam loops."""
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("VIBER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("VIBER_AUTO_REPLY_ENABLED", "1")
+    monkeypatch.setenv("VIBER_ENABLE_SEND", "1")
+
+    automation = MockAutomation()
+
+    def mock_fail_unconfirmed(text):
+        raise ViberDispatchUnconfirmedError("History check timed out after send key")
+
+    automation.send = mock_fail_unconfirmed
+
+    ledger = Ledger(state_dir)
+    responder = ViberAutoResponder(automation=automation, ledger=ledger)
+
+    # 1. First dispatch raises unconfirmed
+    res1 = responder.process_incoming_notification("Viber", "+380981901991", "Hello")
+    assert res1["status"] == "unconfirmed"
+    assert res1["can_retry"] is False
+
+    # 2. Cooldown is still locked in ledger!
+    assert ledger.can_auto_reply("+380981901991", cooldown_hours=24.0) is False
+
+    # 3. Subsequent message from same phone is skipped by cooldown
+    res2 = responder.process_incoming_notification("Viber", "+380981901991", "Hello again")
+    assert res2["status"] == "skipped"
+    assert res2["reason"] == "cooldown_active"
+

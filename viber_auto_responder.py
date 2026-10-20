@@ -53,6 +53,7 @@ from viber_mcp_service import (
     normalize_phone,
     sync_viber_ui_mutex,
     ViberBusyError,
+    ViberDispatchUnconfirmedError,
 )
 
 logger = logging.getLogger("viber_auto_responder")
@@ -249,6 +250,15 @@ class ViberAutoResponder:
         text_to_send = self.reply_text
         try:
             with sync_viber_ui_mutex():
+                # Authoritative re-check under mutex to prevent race condition between concurrent notifications
+                if not self.ledger.can_auto_reply(recipient, cooldown_hours=cooldown):
+                    return {
+                        "status": "skipped",
+                        "reason": "cooldown_active",
+                        "sender": recipient,
+                        "cooldown_hours": cooldown,
+                    }
+
                 self.automation.open_chat_by_number(recipient)
                 try:
                     self.automation.check_recipient_gate(recipient)
@@ -257,9 +267,8 @@ class ViberAutoResponder:
 
                 self.automation.put_draft(text_to_send)
                 send_res = self.automation.send(text_to_send)
-
-            # Record in Ledger to lock cooldown
-            self.ledger.record_auto_reply(recipient, text_to_send)
+                # Record in Ledger immediately inside mutex
+                self.ledger.record_auto_reply(recipient, text_to_send)
 
             self.dispatch_webhook({
                 "event": "incoming_message",
@@ -278,6 +287,31 @@ class ViberAutoResponder:
                 "details": send_res,
             }
 
+        except ViberDispatchUnconfirmedError as e:
+            # Lock cooldown even on unconfirmed dispatch to prevent infinite bot reply loops
+            try:
+                self.ledger.record_auto_reply(recipient, text_to_send)
+            except Exception as rec_err:
+                logger.error(f"Failed to record cooldown on unconfirmed reply: {rec_err}")
+
+            self.dispatch_webhook({
+                "event": "incoming_message",
+                "sender": recipient,
+                "summary": summary,
+                "body": body,
+                "auto_replied": False,
+                "reason": "dispatch_unconfirmed",
+                "error": str(e),
+                "timestamp": time.time(),
+            })
+
+            logger.error(f"Auto-reply to {recipient} unconfirmed: {e}", exc_info=True)
+            return {
+                "status": "unconfirmed",
+                "can_retry": False,
+                "sender": recipient,
+                "error": str(e),
+            }
         except Exception as e:
             logger.error(f"Failed to dispatch auto-reply to {recipient}: {e}", exc_info=True)
             return {

@@ -10,8 +10,18 @@ import sqlite3
 import threading
 import time
 import uuid
-from linux_backend import configured_backend, SafetyError
-from linux_errors import reason_code
+try:
+    from linux_backend import configured_backend, SafetyError
+    from linux_errors import reason_code
+except ImportError:
+    class SafetyError(RuntimeError):
+        pass
+
+    def configured_backend():
+        return None
+
+    def reason_code(e):
+        return str(e)
 
 
 def digest(recipient, text):
@@ -65,7 +75,7 @@ class Ledger:
                 if state == 'terminal' and res_str:
                     try:
                         res = json.loads(res_str)
-                        if res.get('sent') is True or res.get('status') == 'sent':
+                        if res.get('sent') is True or res.get('status') in ('sent', 'unconfirmed', 'unknown'):
                             return True
                     except Exception:
                         return True
