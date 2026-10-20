@@ -4,7 +4,7 @@ from viber_mcp_service import _match_normalize
 
 def test_isolates_and_nbsp_ignored():
     plain = "👇 ВІДКРИТИ ЧЕК\nhttps://example.invalid/receipt/TEST-FAIL"
-    decorated = "👇\u2068 ВІДКРИТИ ЧЕК\nhttps://example.invalid\u00a0/receipt/TEST-FAIL\u2069"
+    decorated = "👇\u2068 ВІДКРИТИ\u00a0ЧЕК\nhttps://example.invalid/receipt/TEST-FAIL\u2069"
     assert _match_normalize(plain) == _match_normalize(decorated)
 
 
