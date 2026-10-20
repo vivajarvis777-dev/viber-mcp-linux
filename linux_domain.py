@@ -10,8 +10,18 @@ import sqlite3
 import threading
 import time
 import uuid
-from linux_backend import configured_backend, SafetyError
-from linux_errors import reason_code
+try:
+    from linux_backend import configured_backend, SafetyError
+    from linux_errors import reason_code
+except ImportError:
+    class SafetyError(RuntimeError):
+        pass
+
+    def configured_backend():
+        return None
+
+    def reason_code(e):
+        return str(e)
 
 
 def digest(recipient, text):
@@ -37,6 +47,14 @@ class Ledger:
         os.close(fd)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS approvals (token TEXT PRIMARY KEY, digest TEXT, expires REAL, state TEXT, result TEXT)')
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS auto_replies (
+                    phone TEXT PRIMARY KEY,
+                    last_replied REAL,
+                    last_text TEXT,
+                    reply_count INTEGER DEFAULT 1
+                )
+            ''')
     @contextmanager
     def connect(self):
         db = sqlite3.connect(self.path, timeout=2)
@@ -57,7 +75,7 @@ class Ledger:
                 if state == 'terminal' and res_str:
                     try:
                         res = json.loads(res_str)
-                        if res.get('sent') is True or res.get('status') == 'sent':
+                        if res.get('sent') is True or res.get('status') in ('sent', 'unconfirmed', 'unknown'):
                             return True
                     except Exception:
                         return True
@@ -82,6 +100,43 @@ class Ledger:
     def finish(self, token, result):
         with self.connect() as db:
             db.execute("UPDATE approvals SET state='terminal',result=? WHERE token=?", (json.dumps(result), token))
+    def can_auto_reply(self, recipient, cooldown_hours=24.0):
+        if cooldown_hours <= 0:
+            return True
+        with self.connect() as db:
+            row = db.execute('SELECT last_replied FROM auto_replies WHERE phone=?', (recipient,)).fetchone()
+            if not row or row[0] is None:
+                return True
+            elapsed = time.time() - float(row[0])
+            return elapsed >= (float(cooldown_hours) * 3600.0)
+    def record_auto_reply(self, recipient, text):
+        with self.connect() as db:
+            now = time.time()
+            row = db.execute('SELECT reply_count FROM auto_replies WHERE phone=?', (recipient,)).fetchone()
+            if row:
+                db.execute(
+                    'UPDATE auto_replies SET last_replied=?, last_text=?, reply_count=reply_count+1 WHERE phone=?',
+                    (now, text, recipient)
+                )
+            else:
+                db.execute(
+                    'INSERT INTO auto_replies (phone, last_replied, last_text, reply_count) VALUES (?, ?, ?, 1)',
+                    (recipient, now, text)
+                )
+    def get_auto_reply_stats(self):
+        with self.connect() as db:
+            total = db.execute('SELECT COUNT(*), COALESCE(SUM(reply_count), 0) FROM auto_replies').fetchone()
+            recent = db.execute(
+                'SELECT phone, last_replied, last_text, reply_count FROM auto_replies ORDER BY last_replied DESC LIMIT 20'
+            ).fetchall()
+            return {
+                'unique_recipients': total[0] if total else 0,
+                'total_replies_sent': total[1] if total else 0,
+                'recent': [
+                    {'phone': r[0], 'last_replied': r[1], 'last_text': r[2], 'reply_count': r[3]}
+                    for r in recent
+                ]
+            }
 
 
 class Service:

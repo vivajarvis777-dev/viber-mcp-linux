@@ -119,8 +119,67 @@ class ViberBusyError(RuntimeError):
     pass
 
 
+class ViberDispatchUnconfirmedError(RuntimeError):
+    """Raised when send action was dispatched to the system/window, but confirmation
+    (editor clearing or history verification) failed or timed out.
+    The message may have already reached the recipient. Automatic retries MUST be blocked.
+    """
+    pass
+
+
 mcp = FastMCP("viber_linux_mcp", instructions="Universal Viber MCP integration for Hermes and n8n on Linux")
-_viber_lock = asyncio.Lock()
+_viber_locks: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+
+
+def get_viber_async_lock() -> asyncio.Lock:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is None:
+        return asyncio.Lock()
+    if loop not in _viber_locks:
+        _viber_locks[loop] = asyncio.Lock()
+    return _viber_locks[loop]
+
+
+@contextlib.contextmanager
+def sync_viber_ui_mutex(timeout: float | None = None, poll_interval: float = 0.05):
+    """Inter-process mutual exclusion for synchronous Viber UI worker threads."""
+    if timeout is None:
+        try:
+            timeout = float(os.getenv("VIBER_MUTEX_TIMEOUT", "10.0"))
+        except ValueError:
+            timeout = 10.0
+
+    lock_path = get_lock_file_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    acquired = False
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except (BlockingIOError, OSError):
+                if time.monotonic() >= deadline:
+                    raise ViberBusyError(
+                        f"Viber UI is busy (locked by another operation on {lock_path.name})"
+                    )
+                time.sleep(poll_interval)
+        yield
+    finally:
+        if acquired:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+        try:
+            os.close(fd)
+        except Exception:
+            pass
 
 
 @contextlib.asynccontextmanager
@@ -132,7 +191,7 @@ async def viber_ui_mutex(timeout: float | None = None, poll_interval: float = 0.
         except ValueError:
             timeout = 10.0
 
-    async with _viber_lock:
+    async with get_viber_async_lock():
         lock_path = get_lock_file_path()
         lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
@@ -619,34 +678,45 @@ class ViberAutomation:
             raise RuntimeError(f"Composer text mismatch before send: expected {clean_expected!r}, got {current!r}")
 
         self.focus_editor()
-        subprocess.run(["xdotool", "key", "--clearmodifiers", "Return"],
-                       env=self.env, check=True, timeout=3)
+        # Point of no return: dispatch begins here
+        try:
+            subprocess.run(["xdotool", "key", "--clearmodifiers", "Return"],
+                           env=self.env, check=True, timeout=3)
+        except Exception as e:
+            raise ViberDispatchUnconfirmedError(f"Return key dispatch error: {e}") from e
+
         time.sleep(0.5)
 
-        after = self.get_editor_text()
-        if after != "":
-            # Try send button fallback, resolved from the live tree.
-            bus = self.get_a11y_bus()
-            dest, _ = self.get_viber_app()
-            _editor_path, editor_ext = self.resolve_editor()
-            btn_path = self.resolve_send_button(editor_ext)
-            if btn_path:
-                btn = bus.get_object(dest, btn_path)
-                btn.DoAction(0, dbus_interface="org.a11y.atspi.Action")
-                time.sleep(0.5)
-                after = self.get_editor_text()
+        try:
+            after = self.get_editor_text()
+            if after != "":
+                # Try send button fallback, resolved from the live tree.
+                bus = self.get_a11y_bus()
+                dest, _ = self.get_viber_app()
+                _editor_path, editor_ext = self.resolve_editor()
+                btn_path = self.resolve_send_button(editor_ext)
+                if btn_path:
+                    btn = bus.get_object(dest, btn_path)
+                    btn.DoAction(0, dbus_interface="org.a11y.atspi.Action")
+                    time.sleep(0.5)
+                    after = self.get_editor_text()
 
-        if after != "":
-            raise RuntimeError("Message was not cleared from editor after send attempt")
+            if after != "":
+                raise ViberDispatchUnconfirmedError("Message was not cleared from editor after send attempt")
 
-        # Verify message in history
-        messages = self.read_messages()
-        found = any(
-            clean_expected in m or norm_exp in unicodedata.normalize("NFC", m).replace("\ufe0f", "")
-            for m in messages
-        )
-        if not found:
-            raise RuntimeError("Sent message not observed in chat history")
+            # Verify message in history
+            messages = self.read_messages()
+            found = any(
+                clean_expected in m or norm_exp in unicodedata.normalize("NFC", m).replace("\ufe0f", "")
+                for m in messages
+            )
+            if not found:
+                raise ViberDispatchUnconfirmedError("Message cleared from editor but not observed in chat history")
+
+        except ViberDispatchUnconfirmedError:
+            raise
+        except Exception as e:
+            raise ViberDispatchUnconfirmedError(f"Post-dispatch verification error: {e}") from e
 
         return {"sent": True, "verified": True, "text": current}
 
@@ -678,6 +748,22 @@ async def health() -> dict:
             else None
         )
 
+        try:
+            from viber_auto_responder import get_auto_responder
+            resp = get_auto_responder()
+            auto_responder_info = {
+                "enabled": resp.enabled,
+                "running": resp.is_running(),
+                "cooldown_hours": resp.cooldown_hours,
+                "stats": resp.ledger.get_auto_reply_stats(),
+            }
+        except Exception as err:
+            auto_responder_info = {
+                "enabled": os.getenv("VIBER_AUTO_REPLY_ENABLED") == "1",
+                "running": False,
+                "error": str(err),
+            }
+
         return {
             "status": "ok",
             "platform": "linux",
@@ -686,6 +772,7 @@ async def health() -> dict:
             "viber_window_found": w_ok,
             "viber_accessibility": dest,
             "active_contact": active_contact,
+            "auto_responder": auto_responder_info,
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -855,7 +942,13 @@ async def put_draft(to: str, text: str) -> dict:
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
-async def send_message(to: str, text: str, approval_token: str = "CONFIRMED", dry_run: bool = False) -> dict:
+async def send_message(
+    to: str,
+    text: str,
+    approval_token: str = "CONFIRMED",
+    dry_run: bool = False,
+    idempotency_key: str = "",
+) -> dict:
     """Send approved message to open chat after explicit operator authorization.
 
     Args:
@@ -863,6 +956,7 @@ async def send_message(to: str, text: str, approval_token: str = "CONFIRMED", dr
         text: Exact expected text currently in composer
         approval_token: Confirmation marker from agent indicating operator permission was received (default: 'CONFIRMED')
         dry_run: If True, navigate and prepare draft without dispatching (default: False)
+        idempotency_key: Optional unique identifier (e.g. invoice_id) guaranteeing strictly single execution
     """
     try:
         phone = auto.resolve_phone(to)
@@ -887,9 +981,34 @@ async def send_message(to: str, text: str, approval_token: str = "CONFIRMED", dr
             "code": "missing_approval",
         }
 
-    # Shared Ledger duplicate check
     ledger = get_shared_ledger()
-    if not dry_run and ledger.is_duplicate(phone, text):
+    clean_key = idempotency_key.strip() if idempotency_key else ""
+
+    # Pre-check fast-path: if idempotency_key is already completed, return cached result immediately
+    if not dry_run and clean_key:
+        with ledger.connect() as db:
+            row = db.execute("SELECT state, result FROM approvals WHERE token=?", (clean_key,)).fetchone()
+            if row:
+                state, res_str = row
+                if state == "terminal" and res_str:
+                    try:
+                        cached_res = json.loads(res_str)
+                        return {
+                            "ok": cached_res.get("sent") is True or cached_res.get("status") == "sent",
+                            "cached": True,
+                            "idempotency_key": clean_key,
+                            **cached_res,
+                        }
+                    except Exception:
+                        pass
+                return {
+                    "ok": False,
+                    "error": f"Operation for idempotency_key {clean_key} already in progress or completed ({state})",
+                    "code": "duplicate_idempotency_key",
+                }
+
+    # Pre-check fast-path (before acquiring mutex)
+    if not dry_run and ledger.is_duplicate(phone, text, current_token=clean_key or None):
         return {
             "ok": False,
             "error": f"Duplicate message to recipient {phone} blocked by ledger",
@@ -898,11 +1017,49 @@ async def send_message(to: str, text: str, approval_token: str = "CONFIRMED", dr
 
     try:
         async with viber_ui_mutex():
+            token_id = clean_key or str(uuid.uuid4())
+
+            # Authoritative duplicate and idempotency check inside mutex
+            if not dry_run:
+                if clean_key:
+                    with ledger.connect() as db:
+                        row = db.execute("SELECT state, result FROM approvals WHERE token=?", (token_id,)).fetchone()
+                        if row:
+                            state, res_str = row
+                            if state == "terminal" and res_str:
+                                try:
+                                    cached_res = json.loads(res_str)
+                                    return {
+                                        "ok": cached_res.get("sent") is True or cached_res.get("status") == "sent",
+                                        "cached": True,
+                                        "idempotency_key": token_id,
+                                        **cached_res,
+                                    }
+                                except Exception:
+                                    pass
+                            return {
+                                "ok": False,
+                                "error": f"Operation for idempotency_key {token_id} already in progress or completed ({state})",
+                                "code": "duplicate_idempotency_key",
+                            }
+
+                if ledger.is_duplicate(phone, text, current_token=token_id):
+                    return {
+                        "ok": False,
+                        "error": f"Duplicate message to recipient {phone} blocked by ledger",
+                        "code": "duplicate_blocked",
+                    }
+
             if auto.current_phone != phone:
                 try:
                     await asyncio.to_thread(auto.open_chat_by_number, phone)
                 except Exception as e:
-                    return {"ok": False, "error": f"Failed to open chat for {to}: {e}"}
+                    return {
+                        "ok": False,
+                        "error": f"Failed to open chat for {to}: {e}",
+                        "code": "send_failed_pre_dispatch",
+                        "can_retry": True,
+                    }
 
             try:
                 await asyncio.to_thread(auto.check_recipient_gate, phone)
@@ -911,9 +1068,19 @@ async def send_message(to: str, text: str, approval_token: str = "CONFIRMED", dr
                     "ok": False,
                     "error": str(err),
                     "code": "recipient_not_on_viber",
+                    "can_retry": False,
                 }
 
-            draft_res = await asyncio.to_thread(auto.put_draft, text)
+            try:
+                draft_res = await asyncio.to_thread(auto.put_draft, text)
+            except Exception as e:
+                return {
+                    "ok": False,
+                    "error": str(e),
+                    "code": "send_failed_pre_dispatch",
+                    "can_retry": True,
+                }
+
             contact_name = auto.get_contact_name(phone)
 
             if dry_run:
@@ -925,8 +1092,7 @@ async def send_message(to: str, text: str, approval_token: str = "CONFIRMED", dr
                     **draft_res,
                 }
 
-            # Claim in shared ledger
-            token_id = str(uuid.uuid4())
+            # Claim in shared ledger BEFORE sending
             with ledger.connect() as db:
                 db.execute(
                     "INSERT OR REPLACE INTO approvals VALUES (?,?,?,?,NULL)",
@@ -940,11 +1106,27 @@ async def send_message(to: str, text: str, approval_token: str = "CONFIRMED", dr
                     "ok": True,
                     "recipient": phone,
                     "contact_name": contact_name,
+                    "token_id": token_id,
                     **result,
                 }
+            except ViberDispatchUnconfirmedError as e:
+                err_msg = str(e)
+                ledger.finish(token_id, {
+                    "status": "unconfirmed",
+                    "sent": "unknown",
+                    "can_retry": False,
+                    "error": err_msg,
+                })
+                return {
+                    "ok": False,
+                    "error": f"Dispatch unconfirmed: {err_msg}. Message may already be sent; automatic retry blocked.",
+                    "code": "send_unconfirmed",
+                    "can_retry": False,
+                    "token_id": token_id,
+                }
             except Exception as e:
-                ledger.finish(token_id, {"status": "error", "sent": False, "error": str(e)})
-                return {"ok": False, "error": str(e)}
+                ledger.finish(token_id, {"status": "error", "sent": False, "can_retry": True, "error": str(e)})
+                return {"ok": False, "error": str(e), "code": "send_failed_pre_dispatch", "can_retry": True}
 
     except ViberBusyError as e:
         return {"ok": False, "error": str(e), "code": "viber_busy"}
@@ -1040,6 +1222,12 @@ def parse_args():
 
 def run_server():
     args = parse_args()
+    if os.getenv("VIBER_AUTO_REPLY_ENABLED") == "1":
+        try:
+            from viber_auto_responder import get_auto_responder
+            get_auto_responder().start_dbus_listener()
+        except Exception:
+            pass
     if args.transport == "stdio":
         mcp.run(transport="stdio")
     else:

@@ -21,6 +21,7 @@ from viber_mcp_service import (
     auto,
     viber_ui_mutex,
     ViberBusyError,
+    ViberDispatchUnconfirmedError,
     get_lock_file_path,
     get_shared_ledger,
     create_http_app,
@@ -200,3 +201,131 @@ def test_http_health_no_gui(monkeypatch):
     assert "read_available" in data
     assert "send_enabled" in data
     assert "viber_window_found" in data
+
+
+def test_concurrent_send_race_condition_blocked(tmp_path, monkeypatch):
+    """Verify that two concurrent send requests for the same recipient and text
+    cannot race through; one succeeds and the other is strictly blocked by the ledger under mutex.
+    """
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("VIBER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("VIBER_ENABLE_SEND", "1")
+
+    phone = "+380509998877"
+    text = "Payment details: 1000 UAH"
+
+    # Mock low-level UI functions with artificial delay inside mutex to simulate real UI interaction
+    def slow_open(p):
+        time.sleep(0.05)
+
+    def slow_send(t):
+        time.sleep(0.05)
+        return {"sent": True, "verified": True, "text": t}
+
+    monkeypatch.setattr(auto, "open_chat_by_number", slow_open)
+    monkeypatch.setattr(auto, "check_recipient_gate", lambda p: None)
+    monkeypatch.setattr(auto, "put_draft", lambda t: {"drafted": True, "verified": True, "text": t})
+    monkeypatch.setattr(auto, "send", slow_send)
+
+    async def run_concurrent():
+        return await asyncio.gather(
+            send_message(phone, text),
+            send_message(phone, text),
+        )
+
+    results = asyncio.run(run_concurrent())
+    oks = [r for r in results if r.get("ok") is True]
+    dups = [r for r in results if r.get("code") == "duplicate_blocked"]
+
+    assert len(oks) == 1, f"Expected exactly 1 success, got: {results}"
+    assert len(dups) == 1, f"Expected exactly 1 duplicate blocked, got: {results}"
+    assert oks[0]["sent"] is True
+
+
+def test_idempotency_key_cached_response(tmp_path, monkeypatch):
+    """Verify that passing an idempotency_key returns cached results on repeat without re-dispatching."""
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("VIBER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("VIBER_ENABLE_SEND", "1")
+
+    phone = "+380501112233"
+    text = "Invoice #1042 details"
+    key = "inv-1042-uuid"
+
+    send_count = 0
+
+    def mock_send(t):
+        nonlocal send_count
+        send_count += 1
+        return {"sent": True, "verified": True, "text": t}
+
+    monkeypatch.setattr(auto, "open_chat_by_number", lambda p: None)
+    monkeypatch.setattr(auto, "check_recipient_gate", lambda p: None)
+    monkeypatch.setattr(auto, "put_draft", lambda t: {"drafted": True, "verified": True, "text": t})
+    monkeypatch.setattr(auto, "send", mock_send)
+
+    # 1. Initial send
+    res1 = asyncio.run(send_message(phone, text, idempotency_key=key))
+    assert res1["ok"] is True
+    assert res1["sent"] is True
+    assert send_count == 1
+
+    # 2. Replay with same idempotency key
+    res2 = asyncio.run(send_message(phone, text, idempotency_key=key))
+    assert res2["ok"] is True
+    assert res2.get("cached") is True
+    assert res2.get("idempotency_key") == key
+    # send was NOT called again
+    assert send_count == 1
+
+
+def test_unconfirmed_dispatch_blocks_retry(tmp_path, monkeypatch):
+    """Verify that an ambiguous failure post-dispatch returns send_unconfirmed and blocks automatic retry."""
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("VIBER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("VIBER_ENABLE_SEND", "1")
+
+    phone = "+380503334455"
+    text = "Critical transaction alert"
+
+    def fail_after_dispatch(t):
+        raise ViberDispatchUnconfirmedError("Readback verification timeout after Return key")
+
+    monkeypatch.setattr(auto, "open_chat_by_number", lambda p: None)
+    monkeypatch.setattr(auto, "check_recipient_gate", lambda p: None)
+    monkeypatch.setattr(auto, "put_draft", lambda t: {"drafted": True, "verified": True, "text": t})
+    monkeypatch.setattr(auto, "send", fail_after_dispatch)
+
+    # 1. Dispatch fails ambiguously
+    res1 = asyncio.run(send_message(phone, text))
+    assert res1["ok"] is False
+    assert res1["code"] == "send_unconfirmed"
+    assert res1["can_retry"] is False
+
+    # 2. Subsequent automatic retry MUST be blocked as duplicate
+    res2 = asyncio.run(send_message(phone, text))
+    assert res2["ok"] is False
+    assert res2["code"] == "duplicate_blocked"
+
+
+def test_pre_dispatch_failure_allows_retry(tmp_path, monkeypatch):
+    """Verify that a pre-dispatch error (before Return) allows retry."""
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("VIBER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("VIBER_ENABLE_SEND", "1")
+
+    phone = "+380503334455"
+    text = "Draft test"
+
+    def fail_draft(t):
+        raise RuntimeError("Draft text mismatch before send")
+
+    monkeypatch.setattr(auto, "open_chat_by_number", lambda p: None)
+    monkeypatch.setattr(auto, "check_recipient_gate", lambda p: None)
+    monkeypatch.setattr(auto, "put_draft", fail_draft)
+
+    res = asyncio.run(send_message(phone, text))
+    assert res["ok"] is False
+    assert res["code"] == "send_failed_pre_dispatch"
+    assert res["can_retry"] is True
+
