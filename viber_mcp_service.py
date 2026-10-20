@@ -119,6 +119,18 @@ class ViberBusyError(RuntimeError):
     pass
 
 
+_INVISIBLE = dict.fromkeys(map(ord, "\u2066\u2067\u2068\u2069\u200e\u200f\u202a\u202b\u202c\u202d\u202e\ufeff"), None)
+
+
+def _match_normalize(text: str) -> str:
+    """Нормалізує текст для порівняння: прибирає невидимі bidi-маркери,
+    уніфікує пробіли. Не змінює видимий вміст."""
+    norm = unicodedata.normalize("NFC", str(text)).replace("\ufe0f", "")
+    norm = norm.translate(_INVISIBLE)
+    norm = norm.replace("\u00a0", " ").replace("\u202f", " ")
+    return " ".join(norm.split())
+
+
 class ViberDispatchUnconfirmedError(RuntimeError):
     """Raised when send action was dispatched to the system/window, but confirmation
     (editor clearing or history verification) failed or timed out.
@@ -706,8 +718,9 @@ class ViberAutomation:
 
             # Verify message in history
             messages = self.read_messages()
+            target = _match_normalize(clean_expected)
             found = any(
-                clean_expected in m or norm_exp in unicodedata.normalize("NFC", m).replace("\ufe0f", "")
+                clean_expected in m or target in _match_normalize(m)
                 for m in messages
             )
             if not found:
