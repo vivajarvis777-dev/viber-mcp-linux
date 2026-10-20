@@ -579,7 +579,94 @@ class ViberAutomation:
                 pass
         return messages
 
-    def open_chat_by_number(self, phone: str):
+    def get_header_snapshot(self) -> bytes | None:
+        try:
+            wx, wy, _, _ = self.get_window_geometry()
+            bbox = (wx + 299, wy + 40, wx + 299 + 302, wy + 40 + 43)
+            img = ImageGrab.grab(bbox=bbox, xdisplay=self.display).convert("RGB")
+            return ImageOps.grayscale(img).point(lambda x: 0 if x < 150 else 255).tobytes()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _find_result_card(crop: Image.Image) -> int | None:
+        """Locate vertical center of matched contact/conversation card in sidebar crop."""
+        w, h = crop.size
+        matches = []
+        for y in range(20, h - 20):
+            colors = [crop.getpixel((x, y))[:3] for x in (60, 100, 150, 200, 240)]
+            is_card = all(
+                c not in [(255, 255, 255), (0, 0, 0)]
+                and c[0] > 200 and c[1] > 200 and c[2] > 200
+                for c in colors
+            )
+            if is_card:
+                matches.append(y)
+        if matches:
+            return (min(matches) + max(matches)) // 2
+        return None
+
+    def navigate_via_ui_search(self, phone: str) -> bool:
+        """Primary navigation: calibrated UI search in Viber desktop."""
+        wx, wy, ww, wh = self.get_window_geometry()
+
+        # 1. Click Compose button at top-right of sidebar (wx + 274, wy + 26)
+        subprocess.run(
+            ["xdotool", "mousemove", str(wx + 274), str(wy + 26), "click", "1"],
+            env=self.env, check=True, timeout=3,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        time.sleep(0.3)
+
+        # 2. Type search query (phone number or contact name) into search field
+        subprocess.run(
+            ["xdotool", "type", "--clearmodifiers", phone],
+            env=self.env, check=True, timeout=3,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        time.sleep(0.6)
+
+        # 3. Locate result card in sidebar
+        crop_top = wy + 150
+        crop_bottom = wy + 600
+        card_y = None
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            try:
+                sidebar_crop = ImageGrab.grab(
+                    bbox=(wx, crop_top, wx + 300, crop_bottom),
+                    xdisplay=self.display,
+                ).convert("RGB")
+                rel_y = self._find_result_card(sidebar_crop)
+                if rel_y is not None:
+                    card_y = crop_top + rel_y
+                    break
+            except Exception:
+                pass
+            time.sleep(0.1)
+
+        if card_y is None:
+            # Calibrated fallback coordinate for single-result / contacts list
+            card_y = wy + 330
+
+        # 4. Click result card
+        subprocess.run(
+            ["xdotool", "mousemove", str(wx + 150), str(card_y), "click", "1"],
+            env=self.env, check=True, timeout=3,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        time.sleep(0.4)
+
+        # 5. Restore sidebar to default chats view via Escape
+        subprocess.run(
+            ["xdotool", "key", "--clearmodifiers", "Escape"],
+            env=self.env, check=False, timeout=3,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        time.sleep(0.3)
+        return True
+
+    def _navigate_via_uri(self, phone: str):
         target_uri = f"viber://chat?number={phone}"
 
         # Delegate execution via systemd-run --user when running inside isolated PrivateTmp namespace
@@ -598,31 +685,63 @@ class ViberAutomation:
             cmd,
             env=self.env,
             check=True,
-            timeout=10,
+            timeout=5,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
         time.sleep(1.0)
 
-        # Ensure Viber window is active
+    def _verify_chat_switch(self, phone: str, prev_header: bytes | None, prev_phone: str | None) -> bool:
+        if phone in self.contacts and self.contacts[phone].get("ref_image"):
+            return self.verify_header_contact(phone, timeout=2.0)
+
+        # If switching from a known previous chat without reference image, verify header bytes changed
+        if prev_header is not None and prev_phone is not None and prev_phone != phone:
+            cur_header = self.get_header_snapshot()
+            if cur_header is not None:
+                return cur_header != prev_header
+        return True
+
+    def open_chat_by_number(self, phone: str):
+        # 1. Quick check: if desired chat is already active and verified, return immediately
+        if self.current_phone == phone:
+            if phone in self.contacts and self.contacts[phone].get("ref_image"):
+                if self.verify_header_contact(phone, timeout=0.5):
+                    return
+            else:
+                return
+
+        prev_header = self.get_header_snapshot()
+        prev_phone = self.current_phone
+
+        # 2. Primary path: calibrated UI search navigation
+        search_err = None
         try:
-            subprocess.run(
-                ["xdotool", "search", "--onlyvisible", "--class", "Viber", "windowactivate"],
-                env=self.env,
-                check=False,
-                timeout=3,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+            self.navigate_via_ui_search(phone)
+            if self._verify_chat_switch(phone, prev_header, prev_phone):
+                self.current_phone = phone
+                return
+        except Exception as e:
+            search_err = e
+
+        # 3. Fallback path: URI-scheme handoff
+        try:
+            self._navigate_via_uri(phone)
+            if self._verify_chat_switch(phone, prev_header, prev_phone):
+                self.current_phone = phone
+                return
         except Exception:
             pass
 
-        # If a visual reference image exists for this contact, verify it
+        # 4. Neither path successfully established active chat for target phone
         if phone in self.contacts and self.contacts[phone].get("ref_image"):
-            if not self.verify_header_contact(phone, timeout=3.0):
-                raise RuntimeError(f"Chat header check failed: active chat does not match verified reference for {phone}")
-
-        self.current_phone = phone
+            if not self.verify_header_contact(phone, timeout=1.0):
+                raise RuntimeError(
+                    f"Chat header check failed: active chat does not match verified reference for {phone}"
+                )
+        raise RuntimeError(
+            f"chat_switch_failed: neither UI search nor URI handoff could switch to {phone} (search error: {search_err})"
+        )
 
     def check_recipient_gate(self, phone: str | None = None) -> None:
         """Fail-closed recipient verification: ensure recipient is a valid Viber subscriber.
@@ -880,11 +999,11 @@ async def open_chat(to: str) -> dict:
                 "note": f"Chat with {contact_name} ({phone}) is open and active."
             }
     except ViberBusyError as e:
-        return {"ok": False, "error": str(e), "code": "viber_busy", "can_retry": True,
-                "idempotency_key": clean_key}
+        return {"ok": False, "error": str(e), "code": "viber_busy", "can_retry": True}
     except Exception as e:
-        return {"ok": False, "error": str(e), "code": "send_unknown_error", "can_retry": False,
-                "idempotency_key": clean_key}
+        err_str = str(e)
+        code = "chat_switch_failed" if ("chat_switch_failed" in err_str or "Chat header check failed" in err_str) else "open_chat_failed"
+        return {"ok": False, "error": err_str, "code": code, "can_retry": False}
 
 
 @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
@@ -916,11 +1035,9 @@ async def read_open_chat(to: str | None = None) -> dict:
                 "contact_name": contact_name
             }
     except ViberBusyError as e:
-        return {"ok": False, "error": str(e), "code": "viber_busy", "can_retry": True,
-                "idempotency_key": clean_key}
+        return {"ok": False, "error": str(e), "code": "viber_busy", "can_retry": True}
     except Exception as e:
-        return {"ok": False, "error": str(e), "code": "send_unknown_error", "can_retry": False,
-                "idempotency_key": clean_key}
+        return {"ok": False, "error": str(e), "code": "read_open_chat_failed", "can_retry": False}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": True})
@@ -953,11 +1070,9 @@ async def put_draft(to: str, text: str) -> dict:
                 **result
             }
     except ViberBusyError as e:
-        return {"ok": False, "error": str(e), "code": "viber_busy", "can_retry": True,
-                "idempotency_key": clean_key}
+        return {"ok": False, "error": str(e), "code": "viber_busy", "can_retry": True}
     except Exception as e:
-        return {"ok": False, "error": str(e), "code": "send_unknown_error", "can_retry": False,
-                "idempotency_key": clean_key}
+        return {"ok": False, "error": str(e), "code": "put_draft_failed", "can_retry": False}
 
 
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
