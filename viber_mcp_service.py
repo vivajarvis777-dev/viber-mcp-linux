@@ -967,6 +967,7 @@ async def send_message(
     approval_token: str = "CONFIRMED",
     dry_run: bool = False,
     idempotency_key: str = "",
+    verify_recipient: bool = False,
 ) -> dict:
     """Send approved message to open chat after explicit operator authorization.
 
@@ -1105,6 +1106,14 @@ async def send_message(
                     "idempotency_key": token_id,
                 }
 
+            if verify_recipient:
+                try:
+                    from recipient_identity import verify_current_recipient
+                    await asyncio.to_thread(verify_current_recipient, auto, phone)
+                except Exception:
+                    return {"ok": False, "code": "recipient_identity_unverified",
+                            "error": "Active chat identity could not be verified; no send attempted",
+                            "idempotency_key": token_id, "can_retry": False}
             try:
                 draft_res = await asyncio.to_thread(auto.put_draft, text)
             except Exception as e:
@@ -1136,7 +1145,11 @@ async def send_message(
                 )
 
             try:
+                if verify_recipient:
+                    await asyncio.to_thread(verify_current_recipient, auto, phone)
                 result = await asyncio.to_thread(auto.send, text)
+                if verify_recipient:
+                    result["recipient_verified"] = True
                 ledger.finish(token_id, {"status": "sent", "sent": True, **result})
                 return {
                     "ok": True,
