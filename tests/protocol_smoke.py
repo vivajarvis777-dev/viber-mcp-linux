@@ -39,7 +39,8 @@ async def smoke(state):
             assert health['send_enabled'] is False, health
             assert health['auto_responder']['enabled'] is False, health
             contacts = payload(await session.call_tool('list_contacts', {}))
-            assert contacts['ok'] is True, contacts
+            assert isinstance(contacts['contacts'], dict), contacts
+            assert isinstance(contacts['details'], dict), contacts
             blocked = payload(await session.call_tool('send_message', {
                 'to': '+12025550123', 'text': 'SYNTHETIC PROTOCOL TEST — NOT SENT',
                 'idempotency_key': 'protocol-send-disabled'}))
