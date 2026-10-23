@@ -9,7 +9,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install locked dependencies
-        run: apt-get update && apt-get install -y desktop-file-utils && pip install uv && uv sync --frozen --python /usr/local/bin/python
+        run: apt-get update && apt-get install -y desktop-file-utils python3-dbus xdotool && pip install uv && uv sync --frozen --python /usr/local/bin/python
+      # Bookworm's dbus extension targets Python 3.11; the service loads it from dist-packages.
+      - name: Verify system D-Bus binding in locked environment
+        run: .venv/bin/python -c "import viber_mcp_service; import dbus; print(dbus.__file__)"
       - name: Unit and protocol tests
         run: .venv/bin/pytest -q && .venv/bin/python tests/protocol_smoke.py
   x11:

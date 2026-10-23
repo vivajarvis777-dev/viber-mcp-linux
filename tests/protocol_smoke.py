@@ -1,4 +1,4 @@
-"""Real MCP client/server stdio test, no GUI and no private data."""
+"""Real canonical MCP client/server stdio test, no live GUI or private data."""
 import asyncio
 import json
 import os
@@ -7,47 +7,51 @@ import sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-UPSTREAM = {'send_message','open_chat','open_and_read','reply','search_and_open','list_chats',
-            'put_draft','save_to_my_notes','open_my_notes','read_open_chat','list_contacts'}
+CANONICAL = {'health', 'list_contacts', 'find_contact', 'save_contact',
+             'open_chat', 'read_open_chat', 'put_draft', 'send_message'}
+
+def payload(response):
+    assert not response.isError, response
+    return json.loads(next(item.text for item in response.content if item.type == 'text'))
 
 async def smoke(state):
-    env={**os.environ,'VIBER_ALLOW_GUI':'0','VIBER_ENABLE_SEND':'0','VIBER_STATE_DIR':state}
-    env.pop('VIBER_CONTACTS_FILE',None)
-    params=StdioServerParameters(command=sys.executable,args=[str(Path(__file__).resolve().parents[1]/'server.py')],env=env)
-    async with stdio_client(params) as (read,write):
-        async with ClientSession(read,write) as session:
-            result=await session.initialize()
-            tools=await session.list_tools()
-            names={t.name for t in tools.tools}
-            assert names==UPSTREAM|{'health','stop','read_visible'},names
-            by_name={tool.name:tool for tool in tools.tools}
-            assert 'expected_recipient' in by_name['put_draft'].inputSchema['properties']
-            for name in ('health','read_visible','list_chats','list_contacts'):
+    env = {**os.environ, 'VIBER_ENABLE_SEND': '0', 'VIBER_AUTO_REPLY_ENABLED': '0',
+           'VIBER_AUTO_APPROVE': '0', 'VIBER_STATE_DIR': state}
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=[str(Path(__file__).resolve().parents[1] / 'server.py')], env=env)
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            result = await session.initialize()
+            tools = await session.list_tools()
+            names = {t.name for t in tools.tools}
+            assert names == CANONICAL, names
+            by_name = {tool.name: tool for tool in tools.tools}
+            for name in ('health', 'list_contacts', 'find_contact', 'read_open_chat'):
                 assert by_name[name].annotations.readOnlyHint is True, name
-            for name in ('send_message','reply','put_draft','read_open_chat'):
+            for name in ('send_message', 'open_chat', 'put_draft', 'save_contact'):
                 assert by_name[name].annotations.readOnlyHint is False, name
-            health=await session.call_tool('health',{})
-            assert not health.isError
-            contacts=await session.call_tool('list_contacts',{})
-            assert not contacts.isError
-            blocked=await session.call_tool('send_message',{'to':'2025550123','text':'SYNTHETIC PROTOCOL TEST — NOT SENT'})
-            assert blocked.isError
-            disabled_calls = {
-                'open_chat':{'to':'2025550123'}, 'open_and_read':{'to':'2025550123'},
-                'reply':{'text':'SYNTHETIC'}, 'search_and_open':{'name':'2025550123'},
-                'list_chats':{}, 'put_draft':{'text':'SYNTHETIC'},
-                'save_to_my_notes':{'text':'SYNTHETIC'}, 'open_my_notes':{}, 'read_open_chat':{},
-                'read_visible':{'region':'conversation'}}
-            for name, arguments in disabled_calls.items():
-                response = await session.call_tool(name,arguments)
-                assert response.isError, name
-            stop=await session.call_tool('stop',{})
-            assert not stop.isError
-            print(json.dumps({'protocolVersion':result.protocolVersion,'tools':sorted(names),
-                              'upstream_parity':'11/11','health':'passed','contacts':'passed',
-                              'send_disabled':'passed','stop':'passed','live_viber':False}))
+            assert by_name['send_message'].annotations.destructiveHint is True
+            for field in ('approval_token', 'dry_run', 'idempotency_key', 'verify_recipient'):
+                assert field in by_name['send_message'].inputSchema['properties'], field
+            health = payload(await session.call_tool('health', {}))
+            assert health['status'] == 'ok', health
+            assert health['send_enabled'] is False, health
+            assert health['auto_responder']['enabled'] is False, health
+            contacts = payload(await session.call_tool('list_contacts', {}))
+            assert isinstance(contacts['contacts'], dict), contacts
+            assert isinstance(contacts['details'], dict), contacts
+            blocked = payload(await session.call_tool('send_message', {
+                'to': '+12025550123', 'text': 'SYNTHETIC PROTOCOL TEST — NOT SENT',
+                'idempotency_key': 'protocol-send-disabled'}))
+            assert blocked['ok'] is False, blocked
+            assert blocked['code'] == 'send_disabled', blocked
+            assert blocked['idempotency_key'] == 'protocol-send-disabled', blocked
+            print(json.dumps({'protocolVersion': result.protocolVersion, 'tools': sorted(names),
+                              'health': 'passed', 'contacts': 'passed',
+                              'send_disabled': 'passed', 'live_viber': False}))
 
-if __name__=='__main__':
+if __name__ == '__main__':
     import tempfile
     with tempfile.TemporaryDirectory(prefix='viber-mcp-protocol-') as state:
         asyncio.run(smoke(state))
