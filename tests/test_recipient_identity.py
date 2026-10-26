@@ -73,3 +73,23 @@ def test_native_send_requires_identity_before_draft_and_dispatch(monkeypatch, id
     else:
         assert result['code']=='recipient_identity_unverified'
         auto.put_draft.assert_not_called();auto.send.assert_not_called()
+
+
+def test_closed_copy_menu_does_not_escape_the_chat(monkeypatch):
+    auto, desktop, clipboard = fixture(monkeypatch, b'+380501112233')
+    menu = auto._walk_accessible.return_value
+    auto._walk_accessible.side_effect = [menu, []]
+    auto.get_editor_text.return_value = 'Existing operator draft'
+    assert identity.verify_current_recipient(auto, '+380501112233')
+    desktop.key.assert_not_called()
+    assert clipboard['value'] == b'operator draft clipboard'
+    auto.put_draft.assert_not_called()
+
+
+def test_changed_composer_fails_and_restores_clipboard(monkeypatch):
+    auto, desktop, clipboard = fixture(monkeypatch, b'+380501112233')
+    auto.get_editor_text.side_effect = ['Original', 'Changed']
+    with pytest.raises(RuntimeError, match='recipient_identity_composer_changed'):
+        identity.verify_current_recipient(auto, '+380501112233')
+    assert clipboard['value'] == b'operator draft clipboard'
+    auto.send.assert_not_called()

@@ -41,6 +41,7 @@ def verify_current_recipient(auto, expected):
         raise RuntimeError('recipient_identity_geometry_invalid')
     # The header anchor was inspected on the current Linux UI; menu selection
     # itself is semantic AT-SPI, never a guessed menu-row coordinate.
+    editor_before = auto.get_editor_text()
     desktop = Desktop({'version': 1, 'window_size': [width, height],
                        'input_calibrated': True})
     with desktop.clipboard():
@@ -84,7 +85,20 @@ def verify_current_recipient(auto, expected):
                 time.sleep(.05)
             raise RuntimeError('recipient_identity_unavailable')
         finally:
-            desktop.key('Escape')
+            # Only dismiss a menu that is still visible. Copy number normally
+            # closes it; an unconditional Escape can affect the active chat.
+            menu_open = False
+            for obj, _ in auto._walk_accessible():
+                try:
+                    if str(obj.GetRoleName(dbus_interface='org.a11y.atspi.Accessible')) == 'menu item' and str(obj.Get('org.a11y.atspi.Accessible', 'Name', dbus_interface='org.freedesktop.DBus.Properties')) == 'Copy number' and auto._obj_extents(obj):
+                        menu_open = True
+                        break
+                except Exception:
+                    continue
+            if menu_open:
+                desktop.key('Escape')
+            if auto.get_editor_text() != editor_before:
+                raise RuntimeError('recipient_identity_composer_changed')
 
 
 def open_verified_recipient(auto, expected):

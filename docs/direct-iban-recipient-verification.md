@@ -24,6 +24,6 @@ This does not retry messages or reset terminal queue/approval records. A missing
 composer or unverified native identity remains held for operator review. Callers
 without verify_recipient keep their existing behavior.
 
-Validation: 227 Python tests pass, including stale reference, stale cache,
+Validation: 229 Python tests pass, including stale reference, stale cache,
 wrong search result, both navigation paths wrong, UI guard failures and a
 recipient change between draft and dispatch. Isolated tests send no messages.
