@@ -85,3 +85,32 @@ def verify_current_recipient(auto, expected):
             raise RuntimeError('recipient_identity_unavailable')
         finally:
             desktop.key('Escape')
+
+
+def open_verified_recipient(auto, expected):
+    """Navigate using native phone proof; never trust cached phone or pixels.
+
+    Caller holds the global UI mutex. All navigation happens before drafting or
+    claiming a send. Only an identity mismatch permits another navigation path;
+    clipboard, focus, geometry and composer failures stop immediately.
+    """
+    def verified():
+        try:
+            if verify_current_recipient(auto, expected) is not True:
+                raise RuntimeError('recipient_identity_unavailable')
+        except RuntimeError as error:
+            if str(error) == 'recipient_identity_mismatch':
+                return False
+            raise
+        auto.current_phone = expected
+        return True
+
+    if verified():
+        return True
+    # Discard stale cache before navigation, including when both paths fail.
+    auto.current_phone = None
+    for navigate in (auto.navigate_via_ui_search, auto._navigate_via_uri):
+        navigate(expected)
+        if verified():
+            return True
+    raise RuntimeError('recipient_identity_mismatch')

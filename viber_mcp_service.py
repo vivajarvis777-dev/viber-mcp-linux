@@ -1083,7 +1083,15 @@ async def send_message(
                         "can_retry": False,
                     }
 
-            if auto.current_phone != phone:
+            if verify_recipient:
+                try:
+                    from recipient_identity import open_verified_recipient, verify_current_recipient
+                    await asyncio.to_thread(open_verified_recipient, auto, phone)
+                except Exception:
+                    return {"ok": False, "code": "recipient_identity_unverified",
+                            "error": "Active chat identity could not be verified; no send attempted",
+                            "idempotency_key": token_id, "can_retry": False}
+            elif auto.current_phone != phone:
                 try:
                     await asyncio.to_thread(auto.open_chat_by_number, phone)
                 except Exception as e:
@@ -1106,14 +1114,6 @@ async def send_message(
                     "idempotency_key": token_id,
                 }
 
-            if verify_recipient:
-                try:
-                    from recipient_identity import verify_current_recipient
-                    await asyncio.to_thread(verify_current_recipient, auto, phone)
-                except Exception:
-                    return {"ok": False, "code": "recipient_identity_unverified",
-                            "error": "Active chat identity could not be verified; no send attempted",
-                            "idempotency_key": token_id, "can_retry": False}
             try:
                 draft_res = await asyncio.to_thread(auto.put_draft, text)
             except Exception as e:
