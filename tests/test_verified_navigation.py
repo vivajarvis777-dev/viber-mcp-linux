@@ -112,3 +112,26 @@ def test_second_identity_failure_prevents_dispatch(monkeypatch):
     result = asyncio.run(service.send_message(PHONE, 'Synthetic', idempotency_key='synthetic', verify_recipient=True))
     assert result['ok'] is False
     auto.send.assert_not_called()
+
+
+@pytest.mark.parametrize('reason', [
+    'Viber composer not found: no visible editable text node in the accessibility tree',
+    'recipient_identity_menu_unavailable',
+])
+def test_empty_chat_can_navigate_but_still_needs_native_proof(monkeypatch, reason):
+    auto, verify = setup(monkeypatch, [RuntimeError(reason), True])
+    auto.current_phone = None
+    assert identity.open_verified_recipient(auto, PHONE)
+    auto.navigate_via_ui_search.assert_called_once_with(PHONE)
+    auto.put_draft.assert_not_called()
+    auto.send.assert_not_called()
+
+
+def test_unavailable_composer_on_both_paths_never_drafts(monkeypatch):
+    unavailable = RuntimeError('Viber composer not found: no visible editable text node')
+    auto, verify = setup(monkeypatch, [unavailable, unavailable, unavailable])
+    with pytest.raises(RuntimeError, match='recipient_identity_mismatch'):
+        identity.open_verified_recipient(auto, PHONE)
+    auto._navigate_via_uri.assert_called_once_with(PHONE)
+    auto.put_draft.assert_not_called()
+    auto.send.assert_not_called()

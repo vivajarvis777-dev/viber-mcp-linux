@@ -105,7 +105,7 @@ def open_verified_recipient(auto, expected):
     """Navigate using native phone proof; never trust cached phone or pixels.
 
     Caller holds the global UI mutex. All navigation happens before drafting or
-    claiming a send. Only an identity mismatch permits another navigation path;
+    claiming a send. An absent chat, unavailable phone menu or mismatch permits navigation;
     clipboard, focus, geometry and composer failures stop immediately.
     """
     def verified():
@@ -113,7 +113,8 @@ def open_verified_recipient(auto, expected):
             if verify_current_recipient(auto, expected) is not True:
                 raise RuntimeError('recipient_identity_unavailable')
         except RuntimeError as error:
-            if str(error) == 'recipient_identity_mismatch':
+            if (str(error) in {'recipient_identity_mismatch', 'recipient_identity_menu_unavailable'}
+                    or str(error).startswith('Viber composer not found:')):
                 return False
             raise
         auto.current_phone = expected

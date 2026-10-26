@@ -13,7 +13,7 @@ Apply the narrow patch from the vivagas-iban-viber repository to deployed source
 
 Verified sends now establish the current native phone before consulting cached
 navigation state. A native number match is authoritative even when a private
-header pixel reference is stale. If the native number differs, UI search and
+header pixel reference is stale. If the native number differs or no chat/phone menu is open, UI search and
 then URI navigation each require a fresh exact native number match. Neither a
 changed header nor the cached target authorizes drafting. Clipboard, focus,
 geometry, menu ambiguity and composer errors still stop the operation. All
@@ -24,6 +24,6 @@ This does not retry messages or reset terminal queue/approval records. A missing
 composer or unverified native identity remains held for operator review. Callers
 without verify_recipient keep their existing behavior.
 
-Validation: 229 Python tests pass, including stale reference, stale cache,
+Validation: 229 Python tests passed before the final empty-chat refinement; all 27 focused identity/navigation tests pass after it, including stale reference, stale cache,
 wrong search result, both navigation paths wrong, UI guard failures and a
 recipient change between draft and dispatch. Isolated tests send no messages.
