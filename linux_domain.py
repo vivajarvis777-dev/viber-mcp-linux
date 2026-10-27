@@ -107,7 +107,7 @@ class Ledger:
     def finish(self, token, result):
         with self.connect() as db:
             db.execute("UPDATE approvals SET state='terminal',result=? WHERE token=?", (json.dumps(result), token))
-    def can_auto_reply(self, recipient, cooldown_hours=24.0, max_replies=5):
+    def can_auto_reply(self, recipient, cooldown_hours=24.0, max_replies=1):
         with self.connect() as db:
             row = db.execute('SELECT last_replied, reply_count FROM auto_replies WHERE phone=?', (recipient,)).fetchone()
             if not row:

@@ -84,8 +84,8 @@ def test_ledger_auto_reply_cooldown_and_stats(tmp_path):
     assert stats2["total_replies_sent"] == 2
     assert stats2["recent"][0]["reply_count"] == 2
 
-    # Zero cooldown disables throttle
-    assert ledger.can_auto_reply(phone, cooldown_hours=0) is True
+    # Disabling cooldown must not bypass the one-time limit.
+    assert ledger.can_auto_reply(phone, cooldown_hours=0) is False
 
 
 def test_recipient_resolution(tmp_path):
@@ -289,7 +289,7 @@ def test_auto_responder_unconfirmed_dispatch_locks_cooldown(tmp_path, monkeypatc
 
 
 def test_max_replies_limit_and_reset(tmp_path, monkeypatch):
-    """Verify strict limit of 5 auto-replies per chat and ledger reset."""
+    """Only one automatic reply; even a stale 5-reply override cannot weaken it."""
     state_dir = tmp_path / "state"
     monkeypatch.setenv("VIBER_STATE_DIR", str(state_dir))
     monkeypatch.setenv("VIBER_AUTO_REPLY_ENABLED", "1")
@@ -303,56 +303,48 @@ def test_max_replies_limit_and_reset(tmp_path, monkeypatch):
 
     phone = "+380981901991"
 
-    # Send 5 replies
-    for i in range(5):
-        res = responder.process_incoming_notification("Viber", phone, f"Message {i+1}")
-        assert res["status"] == "sent", f"Failed on iteration {i+1}"
+    # First inbound gets a reply; the next is suppressed even with zero cooldown.
+    first = responder.process_incoming_notification("Viber", phone, "Message 1")
+    assert first["status"] == "sent"
+    second = responder.process_incoming_notification("Viber", phone, "Message 2")
+    assert second["status"] == "skipped"
+    assert second["reason"] == "cooldown_active"
+    assert len(automation.sent_messages) == 1
 
-    assert len(automation.sent_messages) == 5
-
-    # 6th message must be blocked by max_replies limit!
-    res6 = responder.process_incoming_notification("Viber", phone, "Message 6")
-    assert res6["status"] == "skipped"
-    assert res6["reason"] == "cooldown_active"
-    assert len(automation.sent_messages) == 5
-
-    # Reset limit
+    # Explicit operator reset restores eligibility.
     ledger.reset_auto_reply(phone)
-    assert ledger.can_auto_reply(phone, cooldown_hours=0, max_replies=5) is True
+    assert ledger.can_auto_reply(phone, cooldown_hours=0) is True
 
-    # 7th message can now proceed
-    res7 = responder.process_incoming_notification("Viber", phone, "Message after reset")
-    assert res7["status"] == "sent"
-    assert len(automation.sent_messages) == 6
+    after_reset = responder.process_incoming_notification("Viber", phone, "Message after reset")
+    assert after_reset["status"] == "sent"
+    assert len(automation.sent_messages) == 2
 
 
-def test_iban_history_gate(tmp_path, monkeypatch):
-    """Verify VIBER_AUTO_REPLY_REQUIRE_IBAN=1 only allows replies to clients with confirmed prior delivery."""
+def test_any_inbound_no_iban_gate(tmp_path, monkeypatch):
+    """Any sender may receive one reply; prior IBAN delivery is not required."""
     state_dir = tmp_path / "state"
     monkeypatch.setenv("VIBER_STATE_DIR", str(state_dir))
     monkeypatch.setenv("VIBER_AUTO_REPLY_ENABLED", "1")
     monkeypatch.setenv("VIBER_ENABLE_SEND", "1")
-    monkeypatch.setenv("VIBER_AUTO_REPLY_REQUIRE_IBAN", "1")
+    monkeypatch.setenv("VIBER_AUTO_REPLY_REQUIRE_IBAN", "1")  # obsolete flag must not restrict scope
+    monkeypatch.setenv("VIBER_AUTO_REPLY_COOLDOWN_HOURS", "0")
+    monkeypatch.setenv("VIBER_AUTO_REPLY_MAX_COUNT", "5")  # obsolete override must not permit extra replies
 
     automation = MockAutomation()
     ledger = Ledger(state_dir)
     responder = ViberAutoResponder(automation=automation, ledger=ledger)
 
-    phone = "+380981901991"
+    phone = "+380000000000"
 
-    # 1. No IBAN history -> skipped
-    res = responder.process_incoming_notification("Viber", phone, "Спам або новий контакт")
-    assert res["status"] == "skipped"
-    assert res["reason"] == "no_prior_iban_delivery"
-    assert len(automation.sent_messages) == 0
+    # A synthetic sender with no historical payment/outbox record.
+    assert ledger.has_iban_history(phone) is False
+    res = responder.process_incoming_notification("Viber", phone, "Перше питання")
+    assert res["status"] == "sent"
+    assert len(automation.sent_messages) == 1
 
-    # 2. Record prior IBAN delivery in ledger
-    ledger.record_iban_delivery(phone, order_id="A5763")
-    assert ledger.has_iban_history(phone) is True
-
-    # 3. Now allowed to auto-reply!
-    res2 = responder.process_incoming_notification("Viber", phone, "Я оплатив")
-    assert res2["status"] == "sent"
+    # A later inbound message must not generate another automatic reply.
+    res2 = responder.process_incoming_notification("Viber", phone, "Ще питання")
+    assert res2["status"] == "skipped"
     assert len(automation.sent_messages) == 1
     assert "Павло, Viva!Gas — 067 238 2080" in automation.sent_messages[0]
 

@@ -144,17 +144,8 @@ class ViberAutoResponder:
 
     @property
     def max_replies(self) -> int:
-        if self._custom_max_replies is not None:
-            return int(self._custom_max_replies)
-        val = os.getenv("VIBER_AUTO_REPLY_MAX_COUNT", "5")
-        try:
-            return int(val)
-        except ValueError:
-            return 5
-
-    @property
-    def require_iban(self) -> bool:
-        return os.getenv("VIBER_AUTO_REPLY_REQUIRE_IBAN") == "1"
+        # Automated replies are one-time. A stale environment override must not increase this.
+        return 1
 
     @property
     def reply_text(self) -> str:
@@ -177,10 +168,12 @@ class ViberAutoResponder:
         if not clean:
             return None
 
-        # 1. Direct phone format check
-        norm = normalize_phone(clean)
-        if norm:
-            return norm
+        # A notification title is not a phone if it contains free text or a group name.
+        # Accept only a literal phone-like title (plus digits, spaces, hyphens, parentheses).
+        if re.fullmatch(r"\+?[0-9][0-9 ()-]{7,24}", clean):
+            norm = normalize_phone(clean)
+            if norm:
+                return norm
 
         # 2. Check contacts dictionary
         book = contacts if contacts is not None else getattr(self.automation, "contacts", {})
@@ -198,18 +191,15 @@ class ViberAutoResponder:
                             break
                     except Exception:
                         pass
-        clean_lower = clean.lower()
+        clean_lower = clean.casefold()
+        matches = set()
         for phone_key, info in book.items():
-            if phone_key.lower() == clean_lower:
-                return phone_key
-            name = info.get("name", "").lower()
-            if name == clean_lower or (clean_lower and clean_lower in name):
-                return phone_key
-            aliases = [a.lower() for a in info.get("aliases", [])]
-            if clean_lower in aliases:
-                return phone_key
-
-        return None
+            name = str(info.get("name", "")).casefold()
+            aliases = {str(alias).casefold() for alias in info.get("aliases", [])}
+            if clean_lower == phone_key.casefold() or (name and clean_lower == name) or clean_lower in aliases:
+                matches.add(phone_key)
+        # A partial or ambiguous contact label cannot authorize an outbound reply.
+        return next(iter(matches)) if len(matches) == 1 else None
 
     def dispatch_webhook(self, payload: dict) -> None:
         """Asynchronously dispatch notification / reply event to webhook URL (fail-safe)."""
@@ -280,24 +270,7 @@ class ViberAutoResponder:
                 "body": body,
             }
 
-        # 5. Check IBAN requirement gate
-        if self.require_iban and not self.ledger.has_iban_history(recipient):
-            self.dispatch_webhook({
-                "event": "incoming_message",
-                "sender": recipient,
-                "summary": summary,
-                "body": body,
-                "auto_replied": False,
-                "reason": "no_prior_iban_delivery",
-                "timestamp": time.time(),
-            })
-            return {
-                "status": "skipped",
-                "reason": "no_prior_iban_delivery",
-                "sender": recipient,
-            }
-
-        # 6. Check cooldown and reply limit in SQLite ledger
+        # 5. One-time reply limit in the local ledger. No payment/order linkage.
         cooldown = self.cooldown_hours
         max_replies = self.max_replies
         if not self.ledger.can_auto_reply(recipient, cooldown_hours=cooldown, max_replies=max_replies):
