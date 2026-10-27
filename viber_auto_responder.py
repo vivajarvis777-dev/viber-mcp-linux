@@ -145,6 +145,20 @@ class ViberAutoResponder:
 
         # 2. Check contacts dictionary
         book = contacts if contacts is not None else getattr(self.automation, "contacts", {})
+        if not book:
+            for candidate in [
+                os.getenv("VIBER_CONTACTS_FILE"),
+                Path(__file__).parent / "contacts.json",
+                Path.home() / ".local/state/viber-mcp-linux/contacts.json",
+                Path("/home/hannelora/projects/viber-mcp-linux-ocr-release/contacts.json"),
+            ]:
+                if candidate and os.path.exists(candidate):
+                    try:
+                        with open(candidate, "r", encoding="utf-8") as f:
+                            book = json.load(f)
+                            break
+                    except Exception:
+                        pass
         clean_lower = clean.lower()
         for phone_key, info in book.items():
             if phone_key.lower() == clean_lower:
