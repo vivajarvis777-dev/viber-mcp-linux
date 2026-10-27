@@ -23,6 +23,10 @@ Reply once to a new incoming message from any Viber correspondent. Prior IBAN de
 - The legacy implementation logs private notification text and may resend after a crash between UI send and ledger write. Treat both as blockers.
 - The owner supplied a single customer-facing phone number and asked that the reply show only the number, without a person's name. The exact complete reply still needs owner approval before any send; no other phone is assumed.
 
+## Owner-approved experimental listener shutdown
+
+The owner explicitly approved stopping only experimental PID `750828`. The process and its wrapper were absent on readback; the production Viber MCP HTTP and Desktop user services remained active. The session bus notification name is unowned but activatable; no new replacement notification daemon or event capture is claimed. No customer message was sent as part of this shutdown. Whether the experimental listener sent any earlier automatic reply remains unverified because its ad-hoc stdout log did not establish delivery.
+
 ## Acceptance before rollout
 
 Demonstrate one controlled genuine inbound event in a safe no-send configuration; independently establish direction, personal-chat identity and recipient. Prepare a separate inactive n8n workflow, minimal authenticated durable event intake, one-time idempotency, exact MCP recipient verification, unknown-send hold, sanitized logging, tests and rollback. Obtain explicit approval for the filled message, control recipient, production change and service/process cutover. Never run legacy sender concurrently with the new n8n route.
