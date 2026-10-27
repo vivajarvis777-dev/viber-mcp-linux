@@ -32,6 +32,7 @@ for p in _dist_paths:
 
 try:
     import dbus
+    import dbus.service
     from dbus.mainloop.glib import DBusGMainLoop
     from gi.repository import GLib
     DBUS_AVAILABLE = True
@@ -40,6 +41,43 @@ except Exception:
     DBusGMainLoop = None
     GLib = None
     DBUS_AVAILABLE = False
+
+
+if DBUS_AVAILABLE:
+    class NotificationServer(dbus.service.Object):
+        """Notification service sink claiming org.freedesktop.Notifications on session bus."""
+        def __init__(self, responder, bus):
+            self.responder = responder
+            self._next_id = 1
+            bus_name = dbus.service.BusName("org.freedesktop.Notifications", bus)
+            super().__init__(bus_name, "/org/freedesktop/Notifications")
+
+        @dbus.service.method("org.freedesktop.Notifications", in_signature="", out_signature="as")
+        def GetCapabilities(self):
+            return ["body", "body-markup", "actions"]
+
+        @dbus.service.method("org.freedesktop.Notifications", in_signature="", out_signature="ssss")
+        def GetServerInformation(self):
+            return ("Viber Auto Responder", "VivaGas", "1.0", "1.2")
+
+        @dbus.service.method("org.freedesktop.Notifications", in_signature="susssasa{sv}i", out_signature="u")
+        def Notify(self, app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout):
+            nid = self._next_id
+            self._next_id += 1
+            logger.info(f"Received Notify call: app={app_name}, summary={summary}, body={body}")
+            threading.Thread(
+                target=self.responder.process_incoming_notification,
+                args=(str(app_name), str(summary), str(body)),
+                daemon=True,
+                name="auto-reply-worker",
+            ).start()
+            return dbus.UInt32(nid)
+
+        @dbus.service.method("org.freedesktop.Notifications", in_signature="u", out_signature="")
+        def CloseNotification(self, id):
+            pass
+else:
+    NotificationServer = None
 
 for p in _dist_paths:
     if p in sys.path:
@@ -389,35 +427,46 @@ class ViberAutoResponder:
             try:
                 DBusGMainLoop(set_as_default=True)
                 bus = dbus.SessionBus()
-                bus_obj = bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
-                monitoring = dbus.Interface(bus_obj, "org.freedesktop.DBus.Monitoring")
-                monitoring.BecomeMonitor(
-                    ["type='method_call',interface='org.freedesktop.Notifications',member='Notify'"],
-                    dbus.UInt32(0),
-                )
 
-                def _filter(connection, message):
+                registered = False
+                if NotificationServer is not None:
                     try:
-                        if (
-                            message.get_interface() == "org.freedesktop.Notifications"
-                            and message.get_member() == "Notify"
-                        ):
-                            args = message.get_args_list()
-                            app_name = str(args[0]) if len(args) > 0 else ""
-                            summary = str(args[3]) if len(args) > 3 else ""
-                            body = str(args[4]) if len(args) > 4 else ""
+                        self._notification_server = NotificationServer(self, bus)
+                        registered = True
+                        logger.info("Claimed org.freedesktop.Notifications service as official notification sink")
+                    except Exception as srv_err:
+                        logger.info(f"Could not claim notification service ({srv_err}); using BecomeMonitor fallback")
 
-                            # Handle in worker thread to prevent blocking D-Bus event loop
-                            threading.Thread(
-                                target=self.process_incoming_notification,
-                                args=(app_name, summary, body),
-                                daemon=True,
-                                name="auto-reply-worker",
-                            ).start()
-                    except Exception as err:
-                        logger.error(f"Error in D-Bus message filter: {err}")
+                if not registered:
+                    bus_obj = bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
+                    monitoring = dbus.Interface(bus_obj, "org.freedesktop.DBus.Monitoring")
+                    monitoring.BecomeMonitor(
+                        ["type='method_call',interface='org.freedesktop.Notifications',member='Notify'"],
+                        dbus.UInt32(0),
+                    )
 
-                bus.add_message_filter(_filter)
+                    def _filter(connection, message):
+                        try:
+                            if (
+                                message.get_interface() == "org.freedesktop.Notifications"
+                                and message.get_member() == "Notify"
+                            ):
+                                args = message.get_args_list()
+                                app_name = str(args[0]) if len(args) > 0 else ""
+                                summary = str(args[3]) if len(args) > 3 else ""
+                                body = str(args[4]) if len(args) > 4 else ""
+
+                                # Handle in worker thread to prevent blocking D-Bus event loop
+                                threading.Thread(
+                                    target=self.process_incoming_notification,
+                                    args=(app_name, summary, body),
+                                    daemon=True,
+                                    name="auto-reply-worker",
+                                ).start()
+                        except Exception as err:
+                            logger.error(f"Error in D-Bus message filter: {err}")
+
+                    bus.add_message_filter(_filter)
 
                 self._dbus_loop = GLib.MainLoop()
                 self._dbus_thread = threading.Thread(
