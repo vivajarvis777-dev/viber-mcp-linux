@@ -172,7 +172,7 @@ class ViberAutoResponder:
 
     def resolve_recipient(self, summary: str, contacts: dict | None = None) -> str | None:
         """Resolve notification summary to an E.164 phone number."""
-        clean = summary.strip()
+        clean = re.sub(r'[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]', '', summary).strip()
         if not clean:
             return None
 
@@ -247,12 +247,15 @@ class ViberAutoResponder:
         # 2. Resolve sender
         recipient = self.resolve_recipient(summary)
         if not recipient:
+            logger.warning(f"Unresolved sender for summary: {repr(summary)}")
             return {
                 "status": "ignored",
                 "reason": "unresolved_sender",
                 "summary": summary,
                 "body": body,
             }
+
+        logger.info(f"Resolved sender {recipient} from summary {repr(summary)}")
 
         # 3. Check for self / notes
         if recipient == "self:my-notes":
@@ -347,22 +350,27 @@ class ViberAutoResponder:
                 try:
                     from recipient_identity import open_verified_recipient
                     if hasattr(self.automation, "get_window_geometry"):
+                        logger.info(f"Opening verified chat for {recipient} via native recipient identity...")
                         open_verified_recipient(self.automation, recipient)
                         verified_nav = True
                 except Exception as e:
-                    logger.debug(f"Native recipient verification unavailable, falling back: {e}")
+                    logger.warning(f"Native recipient verification unavailable, falling back: {e}")
 
                 if not verified_nav:
+                    logger.info(f"Opening chat for {recipient} via open_chat_by_number...")
                     self.automation.open_chat_by_number(recipient)
                     try:
                         self.automation.check_recipient_gate(recipient)
                     except Exception as e:
+                        logger.error(f"Recipient gate failed for {recipient}: {e}")
                         return {"status": "failed", "reason": "recipient_gate_failed", "error": str(e)}
 
+                logger.info(f"Drafting and sending canned response to {recipient}...")
                 self.automation.put_draft(text_to_send)
                 send_res = self.automation.send(text_to_send)
                 # Record in Ledger immediately inside mutex
                 self.ledger.record_auto_reply(recipient, text_to_send)
+                logger.info(f"Auto-reply successfully sent to {recipient}: {send_res}")
 
             self.dispatch_webhook({
                 "event": "incoming_message",
