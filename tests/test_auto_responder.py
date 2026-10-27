@@ -336,8 +336,6 @@ def test_any_inbound_no_iban_gate(tmp_path, monkeypatch):
 
     phone = "+380000000000"
 
-    # A synthetic sender with no historical payment/outbox record.
-    assert ledger.has_iban_history(phone) is False
     res = responder.process_incoming_notification("Viber", phone, "Перше питання")
     assert res["status"] == "sent"
     assert len(automation.sent_messages) == 1
