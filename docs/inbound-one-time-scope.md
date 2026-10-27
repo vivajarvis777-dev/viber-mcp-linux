@@ -16,8 +16,9 @@ Reply once to a new incoming message from any Viber correspondent. Prior IBAN de
 ## Open gates
 
 - This branch retains the legacy direct Python sender. The owner wants a separate n8n workflow, so this is only a business-rule and identity regression candidate, **not** the target architecture.
-- The current experimental listener is a separate running process with both auto-reply and send enabled; it claims `org.freedesktop.Notifications`. Do not infer these isolated changes have reached it.
-- There is no proven real Viber notification containing a reliable phone for arbitrary unsaved correspondents, including while the chat is open. Without this evidence, not every sender can be served automatically.
+- The experimental direct-send listener was stopped with owner approval (see below). The live MCP service remains active, but it does not run this isolated candidate; do not enable the old listener as a shortcut.
+- A controlled real inbound Viber notification was observed **only after Viber lost focus** and XFCE notifications were active. The D-Bus sender PID belonged to the live Viber process, and the title/body were present; the title was **not a literal phone number**. The first two owner messages yielded no Viber notification while the app was focused. This proves an event in one UI state, not complete coverage or safe arbitrary-correspondent identity. No raw notification content was logged by the probe.
+- There is still no proven safe route from that non-phone notification title to an exact personal chat for arbitrary unsaved correspondents. Do not enable automatic replies from this observation alone.
 - Owning `org.freedesktop.Notifications` replaces the desktop notification service rather than transparently observing it. Audit notification UI impact and provenance before any activation.
 - The legacy webhook forwarder is fire-and-forget and includes raw incoming text. It is not an accepted authenticated event queue for n8n; replace it before integration.
 - The legacy implementation logs private notification text and may resend after a crash between UI send and ledger write. Treat both as blockers.
@@ -25,7 +26,7 @@ Reply once to a new incoming message from any Viber correspondent. Prior IBAN de
 
 ## Owner-approved experimental listener shutdown
 
-The owner explicitly approved stopping only experimental PID `750828`. The process and its wrapper were absent on readback; the production Viber MCP HTTP and Desktop user services remained active. The session bus notification name is unowned but activatable; no new replacement notification daemon or event capture is claimed. No customer message was sent as part of this shutdown. Whether the experimental listener sent any earlier automatic reply remains unverified because its ad-hoc stdout log did not establish delivery.
+The owner explicitly approved stopping only experimental PID `750828`. The process and its wrapper were absent on readback; the production Viber MCP HTTP and Desktop user services remained active. The session bus notification name was initially unowned but activatable. With a separately owner-approved local notification, XFCE notifyd activated and remained active. For the third controlled inbound test the Viber window was temporarily unfocused, then its prior focus was restored and verified; Viber MCP, Viber Desktop and XFCE notifyd all remained active. No customer message was sent by the agent as part of these checks. Whether the experimental listener sent any earlier automatic reply remains unverified because its ad-hoc stdout log did not establish delivery.
 
 ## Acceptance before rollout
 
