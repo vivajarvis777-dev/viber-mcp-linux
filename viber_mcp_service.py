@@ -1082,6 +1082,7 @@ async def send_message(
     approval_token: str = "CONFIRMED",
     dry_run: bool = False,
     idempotency_key: str = "",
+    verify_recipient: bool = False,
 ) -> dict:
     """Send approved message to open chat after explicit operator authorization.
 
@@ -1197,7 +1198,15 @@ async def send_message(
                         "can_retry": False,
                     }
 
-            if auto.current_phone != phone:
+            if verify_recipient:
+                try:
+                    from recipient_identity import open_verified_recipient, verify_current_recipient
+                    await asyncio.to_thread(open_verified_recipient, auto, phone)
+                except Exception:
+                    return {"ok": False, "code": "recipient_identity_unverified",
+                            "error": "Active chat identity could not be verified; no send attempted",
+                            "idempotency_key": token_id, "can_retry": False}
+            elif auto.current_phone != phone:
                 try:
                     await asyncio.to_thread(auto.open_chat_by_number, phone)
                 except Exception as e:
@@ -1251,7 +1260,11 @@ async def send_message(
                 )
 
             try:
+                if verify_recipient:
+                    await asyncio.to_thread(verify_current_recipient, auto, phone)
                 result = await asyncio.to_thread(auto.send, text)
+                if verify_recipient:
+                    result["recipient_verified"] = True
                 ledger.finish(token_id, {"status": "sent", "sent": True, **result})
                 return {
                     "ok": True,
@@ -1288,6 +1301,28 @@ async def send_message(
     except Exception as e:
         return {"ok": False, "error": str(e), "code": "send_unknown_error", "can_retry": False,
                 "idempotency_key": clean_key}
+
+
+async def get_auto_responder_stats() -> dict:
+    """Retrieve auto-reply metrics, unique recipient counts, and recent responses from SQLite ledger."""
+    ledger = get_shared_ledger()
+    return {"ok": True, **ledger.get_auto_reply_stats()}
+
+
+async def reset_auto_reply_limit(to: str) -> dict:
+    """Reset auto-reply history and counter for a specific phone number or contact."""
+    try:
+        phone = auto.resolve_phone(to)
+    except ValueError as err:
+        return {"ok": False, "error": str(err), "code": "invalid_recipient"}
+    ledger = get_shared_ledger()
+    ledger.reset_auto_reply(phone)
+    return {"ok": True, "recipient": phone, "reset": True}
+
+
+if os.getenv("VIBER_MCP_EXTENDED_TOOLS") == "1":
+    mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})(get_auto_responder_stats)
+    mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False})(reset_auto_reply_limit)
 
 
 class BearerAuthMiddleware:

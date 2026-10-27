@@ -59,10 +59,8 @@ from viber_mcp_service import (
 logger = logging.getLogger("viber_auto_responder")
 
 DEFAULT_AUTO_REPLY_TEXT = (
-    "Доброго дня!\n"
-    "Це автоматичний інформаційний канал сповіщень.\n"
-    "На вхідні повідомлення за цим номером відповіді не надаються.\n"
-    "Будь ласка, звертайтесь за офіційними контактами підтримки."
+    "🤖 Дякуємо за повідомлення! Це автоматичний канал Viva!Gas, тому відповіді по суті в цьому чаті не буде. "
+    "Для подальшого спілкування зателефонуйте або напишіть: Павло, Viva!Gas — 067 238 2080."
 )
 
 
@@ -74,12 +72,14 @@ class ViberAutoResponder:
         reply_text: str | None = None,
         cooldown_hours: float | None = None,
         webhook_url: str | None = None,
+        max_replies: int | None = None,
     ):
         self.automation = automation or auto
         self.ledger = ledger or get_shared_ledger()
         self._custom_reply_text = reply_text
         self._custom_cooldown_hours = cooldown_hours
         self._custom_webhook_url = webhook_url
+        self._custom_max_replies = max_replies
         self._dbus_loop = None
         self._dbus_thread = None
         self._running = False
@@ -102,6 +102,20 @@ class ViberAutoResponder:
             return float(val)
         except ValueError:
             return 24.0
+
+    @property
+    def max_replies(self) -> int:
+        if self._custom_max_replies is not None:
+            return int(self._custom_max_replies)
+        val = os.getenv("VIBER_AUTO_REPLY_MAX_COUNT", "5")
+        try:
+            return int(val)
+        except ValueError:
+            return 5
+
+    @property
+    def require_iban(self) -> bool:
+        return os.getenv("VIBER_AUTO_REPLY_REQUIRE_IBAN") == "1"
 
     @property
     def reply_text(self) -> str:
@@ -210,9 +224,27 @@ class ViberAutoResponder:
                 "body": body,
             }
 
-        # 5. Check cooldown in SQLite ledger
+        # 5. Check IBAN requirement gate
+        if self.require_iban and not self.ledger.has_iban_history(recipient):
+            self.dispatch_webhook({
+                "event": "incoming_message",
+                "sender": recipient,
+                "summary": summary,
+                "body": body,
+                "auto_replied": False,
+                "reason": "no_prior_iban_delivery",
+                "timestamp": time.time(),
+            })
+            return {
+                "status": "skipped",
+                "reason": "no_prior_iban_delivery",
+                "sender": recipient,
+            }
+
+        # 6. Check cooldown and reply limit in SQLite ledger
         cooldown = self.cooldown_hours
-        if not self.ledger.can_auto_reply(recipient, cooldown_hours=cooldown):
+        max_replies = self.max_replies
+        if not self.ledger.can_auto_reply(recipient, cooldown_hours=cooldown, max_replies=max_replies):
             self.dispatch_webhook({
                 "event": "incoming_message",
                 "sender": recipient,
@@ -229,7 +261,7 @@ class ViberAutoResponder:
                 "cooldown_hours": cooldown,
             }
 
-        # 6. Check sending kill-switch
+        # 7. Check sending kill-switch
         if not self.send_enabled:
             self.dispatch_webhook({
                 "event": "incoming_message",
@@ -246,12 +278,12 @@ class ViberAutoResponder:
                 "sender": recipient,
             }
 
-        # 7. Execute auto-reply safely under mutex
+        # 8. Execute auto-reply safely under mutex
         text_to_send = self.reply_text
         try:
             with sync_viber_ui_mutex():
                 # Authoritative re-check under mutex to prevent race condition between concurrent notifications
-                if not self.ledger.can_auto_reply(recipient, cooldown_hours=cooldown):
+                if not self.ledger.can_auto_reply(recipient, cooldown_hours=cooldown, max_replies=max_replies):
                     return {
                         "status": "skipped",
                         "reason": "cooldown_active",
@@ -259,11 +291,21 @@ class ViberAutoResponder:
                         "cooldown_hours": cooldown,
                     }
 
-                self.automation.open_chat_by_number(recipient)
+                verified_nav = False
                 try:
-                    self.automation.check_recipient_gate(recipient)
+                    from recipient_identity import open_verified_recipient
+                    if hasattr(self.automation, "get_window_geometry"):
+                        open_verified_recipient(self.automation, recipient)
+                        verified_nav = True
                 except Exception as e:
-                    return {"status": "failed", "reason": "recipient_gate_failed", "error": str(e)}
+                    logger.debug(f"Native recipient verification unavailable, falling back: {e}")
+
+                if not verified_nav:
+                    self.automation.open_chat_by_number(recipient)
+                    try:
+                        self.automation.check_recipient_gate(recipient)
+                    except Exception as e:
+                        return {"status": "failed", "reason": "recipient_gate_failed", "error": str(e)}
 
                 self.automation.put_draft(text_to_send)
                 send_res = self.automation.send(text_to_send)
@@ -407,6 +449,7 @@ def main():
     parser.add_argument("--listen", action="store_true", help="Start D-Bus listener daemon")
     parser.add_argument("--test-notify", nargs=3, metavar=("APP", "SUMMARY", "BODY"), help="Simulate incoming notification")
     parser.add_argument("--stats", action="store_true", help="Print auto-reply stats from SQLite ledger")
+    parser.add_argument("--reset", metavar="PHONE", help="Reset auto-reply history and count for specific phone number")
     args = parser.parse_args()
 
     responder = get_auto_responder()
@@ -414,6 +457,12 @@ def main():
     if args.stats:
         stats = responder.ledger.get_auto_reply_stats()
         print(json.dumps(stats, indent=2, ensure_ascii=False))
+        return
+
+    if args.reset:
+        norm = normalize_phone(args.reset) or args.reset
+        responder.ledger.reset_auto_reply(norm)
+        print(json.dumps({"ok": True, "reset": norm}, indent=2, ensure_ascii=False))
         return
 
     if args.test_notify:

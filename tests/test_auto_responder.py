@@ -287,3 +287,99 @@ def test_auto_responder_unconfirmed_dispatch_locks_cooldown(tmp_path, monkeypatc
     assert res2["status"] == "skipped"
     assert res2["reason"] == "cooldown_active"
 
+
+def test_max_replies_limit_and_reset(tmp_path, monkeypatch):
+    """Verify strict limit of 5 auto-replies per chat and ledger reset."""
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("VIBER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("VIBER_AUTO_REPLY_ENABLED", "1")
+    monkeypatch.setenv("VIBER_ENABLE_SEND", "1")
+    monkeypatch.setenv("VIBER_AUTO_REPLY_COOLDOWN_HOURS", "0")
+    monkeypatch.setenv("VIBER_AUTO_REPLY_MAX_COUNT", "5")
+
+    automation = MockAutomation()
+    ledger = Ledger(state_dir)
+    responder = ViberAutoResponder(automation=automation, ledger=ledger, cooldown_hours=0, max_replies=5)
+
+    phone = "+380981901991"
+
+    # Send 5 replies
+    for i in range(5):
+        res = responder.process_incoming_notification("Viber", phone, f"Message {i+1}")
+        assert res["status"] == "sent", f"Failed on iteration {i+1}"
+
+    assert len(automation.sent_messages) == 5
+
+    # 6th message must be blocked by max_replies limit!
+    res6 = responder.process_incoming_notification("Viber", phone, "Message 6")
+    assert res6["status"] == "skipped"
+    assert res6["reason"] == "cooldown_active"
+    assert len(automation.sent_messages) == 5
+
+    # Reset limit
+    ledger.reset_auto_reply(phone)
+    assert ledger.can_auto_reply(phone, cooldown_hours=0, max_replies=5) is True
+
+    # 7th message can now proceed
+    res7 = responder.process_incoming_notification("Viber", phone, "Message after reset")
+    assert res7["status"] == "sent"
+    assert len(automation.sent_messages) == 6
+
+
+def test_iban_history_gate(tmp_path, monkeypatch):
+    """Verify VIBER_AUTO_REPLY_REQUIRE_IBAN=1 only allows replies to clients with confirmed prior delivery."""
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("VIBER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("VIBER_AUTO_REPLY_ENABLED", "1")
+    monkeypatch.setenv("VIBER_ENABLE_SEND", "1")
+    monkeypatch.setenv("VIBER_AUTO_REPLY_REQUIRE_IBAN", "1")
+
+    automation = MockAutomation()
+    ledger = Ledger(state_dir)
+    responder = ViberAutoResponder(automation=automation, ledger=ledger)
+
+    phone = "+380981901991"
+
+    # 1. No IBAN history -> skipped
+    res = responder.process_incoming_notification("Viber", phone, "Спам або новий контакт")
+    assert res["status"] == "skipped"
+    assert res["reason"] == "no_prior_iban_delivery"
+    assert len(automation.sent_messages) == 0
+
+    # 2. Record prior IBAN delivery in ledger
+    ledger.record_iban_delivery(phone, order_id="A5763")
+    assert ledger.has_iban_history(phone) is True
+
+    # 3. Now allowed to auto-reply!
+    res2 = responder.process_incoming_notification("Viber", phone, "Я оплатив")
+    assert res2["status"] == "sent"
+    assert len(automation.sent_messages) == 1
+    assert "Павло, Viva!Gas — 067 238 2080" in automation.sent_messages[0]
+
+
+@pytest.mark.anyio
+async def test_mcp_tools_stats_and_reset(tmp_path, monkeypatch):
+    """Verify get_auto_responder_stats and reset_auto_reply_limit MCP tools."""
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("VIBER_STATE_DIR", str(state_dir))
+
+    from viber_mcp_service import get_auto_responder_stats, reset_auto_reply_limit
+    ledger = Ledger(state_dir)
+    monkeypatch.setattr("viber_mcp_service.get_shared_ledger", lambda: ledger)
+
+    phone = "+380981901991"
+    ledger.record_auto_reply(phone, "Test message")
+
+    stats = await get_auto_responder_stats()
+    assert stats["ok"] is True
+    assert stats["unique_recipients"] == 1
+    assert stats["total_replies_sent"] == 1
+
+    reset_res = await reset_auto_reply_limit(phone)
+    assert reset_res["ok"] is True
+    assert reset_res["reset"] is True
+
+    stats_after = await get_auto_responder_stats()
+    assert stats_after["unique_recipients"] == 0
+
+

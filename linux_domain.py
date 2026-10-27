@@ -55,6 +55,13 @@ class Ledger:
                     reply_count INTEGER DEFAULT 1
                 )
             ''')
+            db.execute('''
+                CREATE TABLE IF NOT EXISTS iban_deliveries (
+                    phone TEXT PRIMARY KEY,
+                    delivered_at REAL,
+                    order_id TEXT
+                )
+            ''')
     @contextmanager
     def connect(self):
         db = sqlite3.connect(self.path, timeout=2)
@@ -100,15 +107,21 @@ class Ledger:
     def finish(self, token, result):
         with self.connect() as db:
             db.execute("UPDATE approvals SET state='terminal',result=? WHERE token=?", (json.dumps(result), token))
-    def can_auto_reply(self, recipient, cooldown_hours=24.0):
-        if cooldown_hours <= 0:
-            return True
+    def can_auto_reply(self, recipient, cooldown_hours=24.0, max_replies=5):
         with self.connect() as db:
-            row = db.execute('SELECT last_replied FROM auto_replies WHERE phone=?', (recipient,)).fetchone()
-            if not row or row[0] is None:
+            row = db.execute('SELECT last_replied, reply_count FROM auto_replies WHERE phone=?', (recipient,)).fetchone()
+            if not row:
                 return True
-            elapsed = time.time() - float(row[0])
+            last_replied, reply_count = row
+            if max_replies > 0 and reply_count is not None and reply_count >= max_replies:
+                return False
+            if cooldown_hours <= 0:
+                return True
+            if last_replied is None:
+                return True
+            elapsed = time.time() - float(last_replied)
             return elapsed >= (float(cooldown_hours) * 3600.0)
+
     def record_auto_reply(self, recipient, text):
         with self.connect() as db:
             now = time.time()
@@ -123,6 +136,72 @@ class Ledger:
                     'INSERT INTO auto_replies (phone, last_replied, last_text, reply_count) VALUES (?, ?, ?, 1)',
                     (recipient, now, text)
                 )
+
+    def reset_auto_reply(self, recipient):
+        with self.connect() as db:
+            db.execute('DELETE FROM auto_replies WHERE phone=?', (recipient,))
+
+    def record_iban_delivery(self, phone, order_id=None):
+        with self.connect() as db:
+            db.execute(
+                'INSERT OR REPLACE INTO iban_deliveries (phone, delivered_at, order_id) VALUES (?, ?, ?)',
+                (phone, time.time(), order_id)
+            )
+
+    def has_iban_history(self, phone):
+        with self.connect() as db:
+            # 1. Direct table
+            row = db.execute('SELECT 1 FROM iban_deliveries WHERE phone=?', (phone,)).fetchone()
+            if row:
+                return True
+            # 2. Terminal approvals result JSON
+            rows = db.execute("SELECT result FROM approvals WHERE state='terminal'").fetchall()
+            for (res_str,) in rows:
+                if not res_str:
+                    continue
+                try:
+                    res = json.loads(res_str)
+                    if (res.get('sent') is True or res.get('status') == 'sent') and (res.get('recipient') == phone or res.get('phone') == phone):
+                        return True
+                except Exception:
+                    pass
+        # 3. External IBAN ledger if specified in environment or default production path
+        candidate_paths = [
+            os.getenv('VIBER_IBAN_LEDGER_PATH'),
+            '/var/lib/n8n/vivagas-iban-v2/state/victor-outbox.sqlite',
+        ]
+        clean_digits = ''.join(c for c in phone if c.isdigit())
+        phone_variants = list(set([phone, clean_digits, '+' + clean_digits]))
+        for iban_db in candidate_paths:
+            if not iban_db or not os.path.exists(iban_db):
+                continue
+            try:
+                with sqlite3.connect(f"file:{iban_db}?mode=ro", uri=True, timeout=1) as idb:
+                    placeholders = ','.join('?' for _ in phone_variants)
+                    # Check delivery_outbox (production n8n victor-outbox schema)
+                    try:
+                        r = idb.execute(
+                            f"SELECT 1 FROM delivery_outbox WHERE phone IN ({placeholders}) AND (state='delivered' OR viber_state='desktop_verified') LIMIT 1",
+                            phone_variants
+                        ).fetchone()
+                        if r:
+                            return True
+                    except sqlite3.OperationalError:
+                        pass
+                    # Check orders table fallback (test / synthetic schema)
+                    try:
+                        r = idb.execute(
+                            f"SELECT 1 FROM orders WHERE phone IN ({placeholders}) AND status IN ('sent', 'delivered', 'paid') LIMIT 1",
+                            phone_variants
+                        ).fetchone()
+                        if r:
+                            return True
+                    except sqlite3.OperationalError:
+                        pass
+            except Exception:
+                pass
+        return False
+
     def get_auto_reply_stats(self):
         with self.connect() as db:
             total = db.execute('SELECT COUNT(*), COALESCE(SUM(reply_count), 0) FROM auto_replies').fetchone()
