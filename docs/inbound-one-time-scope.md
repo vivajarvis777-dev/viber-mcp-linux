@@ -21,7 +21,7 @@ Reply once to a new incoming message from any Viber correspondent. Prior IBAN de
 - Owning `org.freedesktop.Notifications` replaces the desktop notification service rather than transparently observing it. Audit notification UI impact and provenance before any activation.
 - The legacy webhook forwarder is fire-and-forget and includes raw incoming text. It is not an accepted authenticated event queue for n8n; replace it before integration.
 - The legacy implementation logs private notification text and may resend after a crash between UI send and ledger write. Treat both as blockers.
-- No complete final reply including both confirmed business contact numbers has been approved, and no controlled recipient/message canary has been authorized.
+- The owner supplied a single customer-facing phone number and asked that the reply show only the number, without a person's name. The exact complete reply still needs owner approval before any send; no other phone is assumed.
 
 ## Acceptance before rollout
 

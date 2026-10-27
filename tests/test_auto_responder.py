@@ -344,7 +344,7 @@ def test_any_inbound_no_iban_gate(tmp_path, monkeypatch):
     res2 = responder.process_incoming_notification("Viber", phone, "Ще питання")
     assert res2["status"] == "skipped"
     assert len(automation.sent_messages) == 1
-    assert "Павло, Viva!Gas — 067 238 2080" in automation.sent_messages[0]
+    assert "зателефонуйте або напишіть: 067 238 2080" in automation.sent_messages[0]
 
 
 @pytest.mark.anyio
